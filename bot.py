@@ -344,6 +344,8 @@ def _seleccionar_opcion_radio(page, texto: str) -> None:
             print("[DEBUG] No se pudo realizar el diagnóstico extendido.")
             
         raise # Re-lanzar para que el log de GitHub muestre el fallo del Job
+
+    
 def _completar_campo_texto(page, texto: str) -> None:
     """
     Busca campos de texto (input/textarea) visibles y vacíos,
