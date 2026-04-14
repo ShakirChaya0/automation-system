@@ -1,0 +1,12 @@
+# ── Bot de Asistencia ──────────────────────────────────────────────────────
+playwright>=1.44.0          # Automatización del navegador
+httpx>=0.27.0               # Cliente HTTP para Telegram API
+python-dotenv>=1.0.0        # Variables de entorno para desarrollo local
+
+# ── Panel de Control (Streamlit) ───────────────────────────────────────────
+streamlit>=1.35.0           # Panel web local
+pandas>=2.2.0               # Manejo de datos para el historial
+
+# ── Zona Horaria (Python 3.9+ ya incluye zoneinfo) ────────────────────────
+# tzdata se necesita en algunos sistemas para ZoneInfo
+tzdata>=2024.1

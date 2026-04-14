@@ -1,0 +1,95 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# asistencia.yml — GitHub Actions · Sistema de Asistencia Pro
+# Cron: cada 15 minutos, lunes-viernes, 7:00-23:00 UTC-3 (Argentina)
+# UTC equivalente: 10:00-02:00 UTC → usamos 10:00-23:59 para cubrir el rango
+# ─────────────────────────────────────────────────────────────────────────────
+name: 🎓 Firmar Asistencia Automática
+
+on:
+  schedule:
+    # Cada 15 minutos, lunes a viernes
+    # UTC 10:00-02:00 = ART 07:00-23:00
+    # GitHub Cron usa UTC. Lunes(1)-Viernes(5)
+    - cron: '*/15 10-23 * * 1-5'   # 07:00-20:00 ART
+    - cron: '*/15 0-2  * * 2-6'    # 21:00-23:00 ART (día siguiente en UTC)
+
+  # Permite disparar manualmente desde la UI de GitHub
+  workflow_dispatch:
+    inputs:
+      debug_mode:
+        description: 'Modo debug (verbose)'
+        required: false
+        default: 'false'
+        type: boolean
+
+# ─── Permisos ─────────────────────────────────────────────────────────────────
+permissions:
+  contents: write   # Necesario para git push del log.json
+
+# ─── Variables de entorno globales ────────────────────────────────────────────
+env:
+  TZ: America/Argentina/Buenos_Aires
+  PYTHONUNBUFFERED: "1"
+
+# ─── Jobs ─────────────────────────────────────────────────────────────────────
+jobs:
+  firmar-asistencia:
+    name: 🤖 Ejecutar Bot de Asistencia
+    runs-on: ubuntu-latest
+    timeout-minutes: 20   # Máximo 20 min (incluye espera aleatoria de hasta 10 min)
+
+    steps:
+      # ── 1. Checkout del repositorio ────────────────────────────────────────
+      - name: 📥 Checkout del repositorio
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 1
+
+      # ── 2. Configurar Python ───────────────────────────────────────────────
+      - name: 🐍 Configurar Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      # ── 3. Instalar dependencias ───────────────────────────────────────────
+      - name: 📦 Instalar dependencias Python
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # ── 4. Instalar Playwright + Chromium ──────────────────────────────────
+      - name: 🎭 Instalar Playwright y Chromium
+        run: |
+          playwright install chromium
+          playwright install-deps chromium
+
+      # ── 5. Ejecutar el Bot ────────────────────────────────────────────────
+      - name: 🚀 Ejecutar Bot de Asistencia
+        id: run_bot
+        env:
+          TELEGRAM_TOKEN:   ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GITHUB_TOKEN:     ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_ACTIONS:   "true"
+          DEBUG_MODE:       ${{ inputs.debug_mode || 'false' }}
+        run: |
+          python bot.py
+        continue-on-error: true   # El job no falla para que el artefacto se suba
+
+      # ── 6. Subir captura de pantalla si hay error ─────────────────────────
+      - name: 📸 Subir captura de error (solo si falla)
+        if: steps.run_bot.outcome == 'failure' && hashFiles('error.png') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: error-screenshot-${{ github.run_id }}
+          path: error.png
+          retention-days: 7
+
+      # ── 7. Fallar el job si el bot falló (para que GitHub lo marque rojo) ─
+      - name: ❌ Propagar fallo si el bot falló
+        if: steps.run_bot.outcome == 'failure'
+        run: |
+          echo "El bot reportó un fallo. Ver logs arriba y artefacto con captura."
+          exit 1
