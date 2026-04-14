@@ -6,7 +6,7 @@
     "dia": "lunes",
    "hora_inicio": "08:00",
     "hora_fin": "09:30",
-    "nombre_alumno": "Chaya Shakir"
+    "nombre_alumno": "Chaya, Shakir Lucas"
   },
     {
     "nombre_materia": "Gestion ingenieril",
@@ -15,7 +15,7 @@
     "dia": "martes",
     "hora_inicio": "17:00",
     "hora_fin": "22:30",
-    "nombre_alumno": "Chaya Shakir"
+    "nombre_alumno": "Chaya, Shakir Lucas"
   },
   {
     "nombre_materia": "Investigación Operativa",
@@ -24,7 +24,7 @@
     "dia": "martes",
     "hora_inicio": "08:45",
     "hora_fin": "10:30",
-    "nombre_alumno": "Chaya Shakir"
+    "nombre_alumno": "Chaya, Shakir Lucas"
   },
   {
     "nombre_materia": "Administración de Sistemas de Información",
@@ -33,7 +33,7 @@
     "dia": "lunes",
     "hora_inicio": "09:45",
     "hora_fin": "12:45",
-    "nombre_alumno": "Chaya Shakir"
+    "nombre_alumno": "Chaya, Shakir Lucas"
   },
   {
     "nombre_materia": "Administración de Sistemas de Información",
@@ -42,7 +42,7 @@
     "dia": "miércoles",
     "hora_inicio": "07:15",
     "hora_fin": "08:45",
-    "nombre_alumno": "Chaya Shakir"
+    "nombre_alumno": "Chaya, Shakir Lucas"
   },
   {
     "nombre_materia": "Redes de Datos",
@@ -51,7 +51,7 @@
     "dia": "martes",
     "hora_inicio": "10:30",
     "hora_fin": "12:00",
-    "nombre_alumno": "Chaya Shakir"
+    "nombre_alumno": "Chaya, Shakir Lucas"
   },
   {
     "nombre_materia": "Redes de Datos",
@@ -60,7 +60,7 @@
     "dia": "jueves",
     "hora_inicio": "11:30",
     "hora_fin": "12:45",
-    "nombre_alumno": "Chaya Shakir"
+    "nombre_alumno": "Chaya, Shakir Lucas"
   },
   {
     "nombre_materia": "Legislación",
@@ -69,7 +69,7 @@
     "dia": "miércoles",
     "hora_inicio": "09:45",
     "hora_fin": "11:15",
-    "nombre_alumno": "Chaya Shakir"
+    "nombre_alumno": "Chaya, Shakir Lucas"
   },
   {
     "nombre_materia": "Simulación",
@@ -78,7 +78,7 @@
     "dia": "miércoles",
     "hora_inicio": "11:15",
     "hora_fin": "13:30",
-    "nombre_alumno": "Chaya Shakir"
+    "nombre_alumno": "Chaya, Shakir Lucas"
   },
   {
     "nombre_materia": "Tecnologías para la Automatización",
@@ -87,7 +87,7 @@
     "dia": "jueves",
     "hora_inicio": "08:00",
     "hora_fin": "10:30",
-    "nombre_alumno": "Chaya Shakir"
+    "nombre_alumno": "Chaya, Shakir Lucas"
   },
   {
     "nombre_materia": "Tecnologías para la Automatización",
@@ -96,6 +96,6 @@
     "dia": "viernes",
     "hora_inicio": "08:00",
     "hora_fin": "10:30",
-    "nombre_alumno": "Chaya Shakir"
+    "nombre_alumno": "Chaya, Shakir Lucas"
   }
 ]
