@@ -289,28 +289,61 @@ def completar_formulario(page, materia: dict) -> None:
 
 def _seleccionar_opcion_radio(page, texto: str) -> None:
     """
-    Busca una opción por su texto y hace clic en el botón de selección 
-    correspondiente (el círculo a la izquierda).
+    Busca y selecciona una opción en Microsoft Forms.
+    Incluye logs de trazabilidad detallados para GitHub Actions.
     """
-    # 1. Buscamos el contenedor que tiene el texto de la opción (ej. "401")
-    # Usamos text=texto para que sea exacto y evite confusiones
-    contenedor_opcion = page.locator("div[role='listitem']", has_text=texto).first
-
-    if contenedor_opcion.is_visible(timeout=5000):
-        # 2. Dentro de ese contenedor específico, buscamos el botón de selección
-        # Suele ser el que tiene el aria-label de 'Respuesta correcta' o el primer botón
-        boton_check = contenedor_opcion.locator("button[aria-label='Respuesta correcta']").first
+    print(f"\n[TRACE] Iniciando búsqueda de opción: '{texto}'")
+    
+    try:
+        # Selector basado en la estructura de Microsoft Forms que enviaste
+        selector_label = f"label:has(span[aria-label='{texto}'])"
+        opcion_elemento = page.locator(selector_label).first
         
-        # Fallback: si no encuentra por aria-label, intentamos el primer botón del contenedor
-        if not boton_check.is_visible(timeout=500):
-            boton_check = contenedor_opcion.locator("button").first
-
-        print(f"[BOT] Seleccionando opción: '{texto}'")
-        boton_check.click()
+        # 1. Verificar presencia en el DOM
+        print(f"[DEBUG] Esperando a que el elemento '{texto}' esté presente en el DOM...")
+        opcion_elemento.wait_for(state="attached", timeout=5000)
+        
+        # 2. Verificar visibilidad (Scroll si es necesario)
+        if not opcion_elemento.is_visible():
+            print(f"[DEBUG] La opción '{texto}' no es visible. Intentando scroll...")
+            opcion_elemento.scroll_into_view_if_needed()
+        
+        # 3. Intentar el clic
+        print(f"[DEBUG] Ejecutando clic en el label de '{texto}'")
+        opcion_elemento.click()
+        
+        # 4. Verificación post-clic (opcional pero recomendada)
+        # Verificamos si el input interno quedó marcado (checked)
+        is_checked = opcion_elemento.locator("input").is_checked()
+        if is_checked:
+            print(f"[✅ SUCCESS] Opción '{texto}' seleccionada y marcada correctamente.")
+        else:
+            print(f"[⚠️ WARNING] Se hizo clic en '{texto}', pero el sistema no lo reporta como 'marcado'.")
+            
         page.wait_for_timeout(1000)
-    else:
-        raise ValueError(f"No se encontró la opción con el texto: '{texto}'")
 
+    except Exception as e:
+        print(f"[❌ ERROR] Falló la selección de la opción: '{texto}'")
+        print(f"[DEBUG] Motivo del error: {type(e).__name__}")
+        
+        # LOG DE EMERGENCIA: ¿Qué hay realmente en la página?
+        print("[DEBUG] Analizando entorno para diagnóstico...")
+        try:
+            # Listar todos los aria-labels de opciones disponibles
+            opciones_disponibles = page.locator("span[aria-label]").all_attribute_values("aria-label")
+            if opciones_disponibles:
+                print(f"[DEBUG] Opciones encontradas en el formulario: {opciones_disponibles}")
+            else:
+                print("[DEBUG] No se detectó ninguna opción con 'aria-label' en la página actual.")
+                
+            # Capturar si hay algún mensaje de error en el formulario
+            error_msg = page.locator("[data-automation-id='error-message']").all_text_contents()
+            if error_msg:
+                print(f"[DEBUG] Mensaje de error del formulario detectado: {error_msg}")
+        except:
+            print("[DEBUG] No se pudo realizar el diagnóstico extendido.")
+            
+        raise # Re-lanzar para que el log de GitHub muestre el fallo del Job
 def _completar_campo_texto(page, texto: str) -> None:
     """
     Busca campos de texto (input/textarea) visibles y vacíos,
