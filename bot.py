@@ -270,9 +270,7 @@ def completar_formulario(page, materia: dict) -> None:
             continue
 
         # ── Buscar y clickear botón 'Enviar' ──────────────────────────────
-        boton_enviar = page.locator(
-            "//div[@role='button'][contains(., 'Enviar') or contains(., 'Submit')]"
-        ).first
+        boton_enviar = page.locator('button[data-automation-id="submitButton"]')
 
         if boton_enviar.is_visible(timeout=5000):
             print("[BOT] Botón 'Enviar' encontrado. Enviando formulario...")
