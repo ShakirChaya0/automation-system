@@ -4,6 +4,15 @@
     "comision": "401",
     "link": "https://forms.cloud.microsoft/Pages/ResponsePage.aspx?id=wrlHpBOiwU6BAz6mmlFqWbc3ZouKx-pLtGrUy0HT6GVUOERXUDhNQTc2NVFJMjhET1dPUFQ2SFUxSi4u&origin=QRCode",
     "dia": "lunes",
+   "hora_inicio": "08:00",
+    "hora_fin": "09:30",
+    "nombre_alumno": "Chaya Shakir"
+  },
+    {
+    "nombre_materia": "Investigación Operativa",
+    "comision": "401",
+    "link": "https://forms.cloud.microsoft/Pages/ResponsePage.aspx?id=wrlHpBOiwU6BAz6mmlFqWbc3ZouKx-pLtGrUy0HT6GVUOERXUDhNQTc2NVFJMjhET1dPUFQ2SFUxSi4u&origin=QRCode",
+    "dia": "martes",
     "hora_inicio": "17:00",
     "hora_fin": "19:30",
     "nombre_alumno": "Chaya Shakir"
