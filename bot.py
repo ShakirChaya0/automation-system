@@ -289,21 +289,27 @@ def completar_formulario(page, materia: dict) -> None:
 
 def _seleccionar_opcion_radio(page, texto: str) -> None:
     """
-    Busca y selecciona un radio button o checkbox cuya etiqueta
-    contenga el texto exacto especificado.
+    Busca una opción por su texto y hace clic en el botón de selección 
+    correspondiente (el círculo a la izquierda).
     """
-    selector = (
-        f"//div[@role='radio' or @role='checkbox']"
-        f"[.//span[normalize-space(text())='{texto}']]"
-    )
-    elemento = page.locator(selector).first
-    if elemento.is_visible(timeout=3000):
-        elemento.click()
-        print(f"[BOT] Opción seleccionada: '{texto}'")
-        page.wait_for_timeout(500)
-    else:
-        raise ValueError(f"Opción no encontrada: '{texto}'")
+    # 1. Buscamos el contenedor que tiene el texto de la opción (ej. "401")
+    # Usamos text=texto para que sea exacto y evite confusiones
+    contenedor_opcion = page.locator("div[role='listitem']", has_text=texto).first
 
+    if contenedor_opcion.is_visible(timeout=5000):
+        # 2. Dentro de ese contenedor específico, buscamos el botón de selección
+        # Suele ser el que tiene el aria-label de 'Respuesta correcta' o el primer botón
+        boton_check = contenedor_opcion.locator("button[aria-label='Respuesta correcta']").first
+        
+        # Fallback: si no encuentra por aria-label, intentamos el primer botón del contenedor
+        if not boton_check.is_visible(timeout=500):
+            boton_check = contenedor_opcion.locator("button").first
+
+        print(f"[BOT] Seleccionando opción: '{texto}'")
+        boton_check.click()
+        page.wait_for_timeout(1000)
+    else:
+        raise ValueError(f"No se encontró la opción con el texto: '{texto}'")
 
 def _completar_campo_texto(page, texto: str) -> None:
     """
