@@ -521,11 +521,92 @@ def _completar_campo_texto(page, texto: str) -> bool:
     return False
 
 
+# ─── Excepción específica para formulario cerrado ────────────────────────────
+
+class FormularioCerradoError(Exception):
+    """
+    Se lanza cuando el formulario ya no acepta respuestas.
+    A diferencia de un error de red/timeout, este estado es definitivo:
+    no tiene sentido reintentar, y NO debe contar como fallo del bot.
+    """
+
+
+# ─── Mensajes de cierre conocidos (MS Forms, multilenguaje) ──────────────────
+
+_MENSAJES_FORMULARIO_CERRADO = [
+    # Español
+    "ya no se aceptan respuestas",
+    "este formulario ya no acepta",
+    "el formulario está cerrado",
+    "no se aceptan más respuestas",
+    # Inglés (por si el tenant tiene otro idioma)
+    "this form is no longer accepting responses",
+    "form is closed",
+    "no longer accepting responses",
+    # Portugués (raro, pero por si acaso)
+    "este formulário não está mais aceitando respostas",
+]
+
+# Selector exacto del elemento que Microsoft Forms usa para el error
+_SELECTOR_ERROR_MSFORMS = (
+    "[data-automation-id='errorTitle'],"
+    "[data-automation-id='error-title'],"
+    ".office-form-closed-message,"
+    "[class*='form-closed']"
+)
+
+
+def _verificar_formulario_activo(page, nombre_materia: str) -> None:
+    """
+    Analiza el DOM recién cargado en busca de indicadores de formulario cerrado.
+
+    Estrategia en dos capas:
+      1. Selector estructural: busca el elemento exacto que MS Forms usa
+         (`data-automation-id='errorTitle'`). Es el más fiable.
+      2. Texto visible: escanea todo el contenido de la página normalizado
+         contra los mensajes conocidos. Cubre variantes de idioma y versiones
+         futuras del componente.
+
+    Lanza FormularioCerradoError si el formulario no acepta respuestas,
+    lo que impide que el bot siga intentando completar campos inexistentes.
+    """
+    # ── Capa 1: selector estructural ─────────────────────────────────────────
+    try:
+        error_elem = page.locator(_SELECTOR_ERROR_MSFORMS).first
+        if error_elem.is_visible(timeout=3_000):
+            texto_error = error_elem.text_content(timeout=2_000) or ""
+            raise FormularioCerradoError(
+                f"El formulario rechazó la entrada · Mensaje del Form: \"{texto_error.strip()}\""
+            )
+    except PlaywrightTimeoutError:
+        pass  # El selector no existe → formulario activo, seguir
+    except FormularioCerradoError:
+        raise  # Re-propagar la excepción que acabamos de crear
+    except Exception as e:
+        log.debug(f"  Verificación estructural: {type(e).__name__} (ignorado)")
+
+    # ── Capa 2: texto visible de la página ───────────────────────────────────
+    try:
+        texto_pagina = normalizar_texto(page.locator("body").text_content(timeout=3_000) or "")
+        for msg in _MENSAJES_FORMULARIO_CERRADO:
+            if normalizar_texto(msg) in texto_pagina:
+                raise FormularioCerradoError(
+                    f"Texto de cierre detectado en página: \"{msg}\""
+                )
+    except FormularioCerradoError:
+        raise
+    except Exception as e:
+        log.debug(f"  Verificación textual: {type(e).__name__} (ignorado)")
+
+    log.ok(f"Formulario activo y listo para completar: '{nombre_materia}'")
+
+
 def completar_formulario(page, materia: dict) -> None:
     """
     Navega y completa el formulario de Microsoft Forms.
     Maneja formularios simples y multipágina (botón Siguiente/Next).
-    Lanza RuntimeError si no puede completar el envío.
+    Lanza FormularioCerradoError si el form no acepta respuestas (sin reintentar).
+    Lanza RuntimeError ante otros fallos de navegación o envío.
     """
     nombre_materia = materia["nombre_materia"]
     comision       = materia["comision"]
@@ -546,6 +627,11 @@ def completar_formulario(page, materia: dict) -> None:
         page.wait_for_load_state("networkidle", timeout=15_000)
     except PlaywrightTimeoutError:
         log.warn("networkidle no alcanzado en 15s, continuando...")
+
+    # ── VALIDACIÓN TEMPRANA: ¿el form acepta respuestas? ─────────────────────
+    # Se ejecuta ANTES de intentar interactuar con cualquier campo.
+    # Si el form está cerrado, lanza FormularioCerradoError y se aborta limpiamente.
+    _verificar_formulario_activo(page, nombre_materia)
 
     page.wait_for_timeout(2500)  # Pausa natural post-carga
     log.debug(f"Página cargada. URL: {page.url} | Título: {page.title()}")
@@ -711,6 +797,23 @@ def _procesar_materia(materia: dict, registro: list, intento: int = 1) -> tuple[
                 )
                 return True, registro
 
+            except FormularioCerradoError as e:
+                # ── FORMULARIO CERRADO — no es un error del bot ────────────
+                # El form no acepta respuestas. No reintentar, no capturar
+                # screenshot, no marcar el job como fallido.
+                log.warn(f"⏸ Formulario cerrado para '{nombre}': {e}")
+                enviar_telegram(
+                    f"⏸ <b>Formulario cerrado</b>\n"
+                    f"📚 {nombre}\n"
+                    f"ℹ️ {str(e)}\n"
+                    f"🕐 {ahora().strftime('%H:%M')} ART\n"
+                    f"<i>No se reintentará hasta la próxima ventana horaria.</i>"
+                )
+                # Retornar "éxito" para que el retry no se active y el job
+                # no quede rojo en GitHub Actions. La asistencia no se firma
+                # (correcto: si el form está cerrado, nada que hacer).
+                return True, registro
+
             except Exception as e:
                 log.error(f"Error en formulario: {e}")
                 traceback.print_exc()
@@ -739,6 +842,9 @@ def _procesar_materia(materia: dict, registro: list, intento: int = 1) -> tuple[
             finally:
                 context.close()
                 browser.close()
+
+    except FormularioCerradoError:
+        raise  # Dejar que suba: ya fue manejado en el bloque interno
 
     except Exception as e:
         log.error(f"Error crítico de Playwright: {type(e).__name__}: {e}")
