@@ -1,95 +1,123 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # asistencia.yml — GitHub Actions · Sistema de Asistencia Pro
-# Cron: cada 15 minutos, lunes-viernes, 7:00-23:00 UTC-3 (Argentina)
-# UTC equivalente: 10:00-02:00 UTC → usamos 10:00-23:59 para cubrir el rango
+#
+# Horario de cursada: 07:15 – 13:35 ART (America/Argentina/Buenos_Aires)
+# ART = UTC-3, por lo tanto en UTC:
+#   07:15 ART  →  10:15 UTC
+#   13:35 ART  →  16:35 UTC
+#
+# Cron activo: */15 10-16 * * 1-5
+#   → cubre 10:00–16:59 UTC = 07:00–13:59 ART  ✓
+#   → antes de las 10 UTC (07:00 ART) no corre
+#   → después de las 17 UTC (14:00 ART) no corre
+#
+# Ahorro vs. cron 24hs: de 96 ejecuciones/día → 28 ejecuciones/día (~70% menos)
 # ─────────────────────────────────────────────────────────────────────────────
-name: 🎓 Firmar Asistencia Automática
+name: 🎓 Firmar Asistencia
 
 on:
   schedule:
-    # Cada 15 minutos, lunes a viernes
-    # UTC 10:00-02:00 = ART 07:00-23:00
-    # GitHub Cron usa UTC. Lunes(1)-Viernes(5)
-    - cron: '*/15 10-23 * * 1-5'   # 07:00-20:00 ART
-    - cron: '*/15 0-2  * * 2-6'    # 21:00-23:00 ART (día siguiente en UTC)
+    # Lunes a Viernes, 10:00–16:59 UTC (= 07:00–13:59 ART), cada 15 minutos
+    - cron: '*/15 10-16 * * 1-5'
 
-  # Permite disparar manualmente desde la UI de GitHub
+  # Ejecución manual desde GitHub UI (útil para debug o firmas fuera de horario)
   workflow_dispatch:
     inputs:
-      debug_mode:
-        description: 'Modo debug (verbose)'
+      forzar:
+        description: 'Forzar ejecución ignorando ventana horaria'
         required: false
-        default: 'false'
+        default: false
         type: boolean
 
-# ─── Permisos ─────────────────────────────────────────────────────────────────
+# ─── Permisos mínimos necesarios ─────────────────────────────────────────────
 permissions:
-  contents: write   # Necesario para git push del log.json
+  contents: write   # Para git push del log.json
 
-# ─── Variables de entorno globales ────────────────────────────────────────────
+# ─── Variables globales ───────────────────────────────────────────────────────
 env:
   TZ: America/Argentina/Buenos_Aires
   PYTHONUNBUFFERED: "1"
+  PYTHONDONTWRITEBYTECODE: "1"
 
 # ─── Jobs ─────────────────────────────────────────────────────────────────────
 jobs:
   firmar-asistencia:
-    name: 🤖 Ejecutar Bot de Asistencia
+    name: 🤖 Bot de Asistencia
     runs-on: ubuntu-latest
-    timeout-minutes: 20   # Máximo 20 min (incluye espera aleatoria de hasta 10 min)
+    # 18 min máx: 8 min espera aleatoria + ~5 min navegación + margen
+    timeout-minutes: 18
 
     steps:
-      # ── 1. Checkout del repositorio ────────────────────────────────────────
+      # ── 1. Info de contexto (muy útil para debug) ──────────────────────
+      - name: 🕐 Hora y contexto de ejecución
+        run: |
+          echo "──────────────────────────────────────────"
+          echo "  Fecha/Hora UTC : $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "  Fecha/Hora ART : $(TZ='America/Argentina/Buenos_Aires' date '+%Y-%m-%d %H:%M:%S ART')"
+          echo "  Día de semana  : $(TZ='America/Argentina/Buenos_Aires' date '+%A')"
+          echo "  Trigger        : ${{ github.event_name }}"
+          echo "  Run ID         : ${{ github.run_id }}"
+          echo "  Forzar modo    : ${{ inputs.forzar || 'false' }}"
+          echo "──────────────────────────────────────────"
+
+      # ── 2. Checkout ────────────────────────────────────────────────────
       - name: 📥 Checkout del repositorio
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 1
 
-      # ── 2. Configurar Python ───────────────────────────────────────────────
+      # ── 3. Python ──────────────────────────────────────────────────────
       - name: 🐍 Configurar Python 3.12
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
           cache: 'pip'
 
-      # ── 3. Instalar dependencias ───────────────────────────────────────────
-      - name: 📦 Instalar dependencias Python
+      # ── 4. Dependencias Python ─────────────────────────────────────────
+      - name: 📦 Instalar dependencias
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          python -m pip install --upgrade pip --quiet
+          pip install -r requirements.txt --quiet
+          echo "✅ Dependencias instaladas."
 
-      # ── 4. Instalar Playwright + Chromium ──────────────────────────────────
+      # ── 5. Playwright + Chromium ───────────────────────────────────────
       - name: 🎭 Instalar Playwright y Chromium
         run: |
           playwright install chromium
           playwright install-deps chromium
+          echo "✅ Playwright + Chromium listos."
 
-      # ── 5. Ejecutar el Bot ────────────────────────────────────────────────
-      - name: 🚀 Ejecutar Bot de Asistencia
+      # ── 6. Ejecutar el Bot ────────────────────────────────────────────
+      - name: 🚀 Ejecutar bot de asistencia
         id: run_bot
         env:
           TELEGRAM_TOKEN:   ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           GITHUB_TOKEN:     ${{ secrets.GITHUB_TOKEN }}
           GITHUB_ACTIONS:   "true"
-          DEBUG_MODE:       ${{ inputs.debug_mode || 'false' }}
-        run: |
-          python bot.py
-        continue-on-error: true   # El job no falla para que el artefacto se suba
+          FORZAR:           ${{ inputs.forzar || 'false' }}
+        run: python bot.py
+        # continue-on-error: true garantiza que el step de artefacto
+        # se ejecute incluso si el bot falla
+        continue-on-error: true
 
-      # ── 6. Subir captura de pantalla si hay error ─────────────────────────
-      - name: 📸 Subir captura de error (solo si falla)
+      # ── 7. Subir captura solo si el bot falló ─────────────────────────
+      - name: 📸 Subir captura de error
         if: steps.run_bot.outcome == 'failure' && hashFiles('error.png') != ''
         uses: actions/upload-artifact@v4
         with:
-          name: error-screenshot-${{ github.run_id }}
-          path: error.png
+          name: captura-error-${{ github.run_id }}
+          path: |
+            error.png
+            error_*.png
           retention-days: 7
+          if-no-files-found: ignore
 
-      # ── 7. Fallar el job si el bot falló (para que GitHub lo marque rojo) ─
-      - name: ❌ Propagar fallo si el bot falló
+      # ── 8. Marcar el job como fallido si el bot falló ─────────────────
+      # (necesario porque usamos continue-on-error: true en el step anterior)
+      - name: ❌ Propagar estado de fallo
         if: steps.run_bot.outcome == 'failure'
         run: |
-          echo "El bot reportó un fallo. Ver logs arriba y artefacto con captura."
+          echo "::error::El bot reportó un fallo. Ver logs del step anterior y artefacto 'captura-error-${{ github.run_id }}'."
           exit 1
