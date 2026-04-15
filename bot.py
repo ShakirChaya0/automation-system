@@ -11,6 +11,7 @@ import subprocess
 import sys
 import time
 import traceback
+import unicodedata
 from datetime import datetime, time as dt_time
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -113,6 +114,91 @@ def normalizar_dia(dia: str) -> str:
     """Elimina tildes y pasa a minúsculas para comparación robusta."""
     tabla = str.maketrans("áéíóúÁÉÍÓÚ", "aeiouAEIOU")
     return dia.lower().translate(tabla)
+
+
+# ─── Normalización y coincidencia fuzzy ──────────────────────────────────────
+
+def normalizar_texto(texto: str) -> str:
+    """
+    Normalización canónica para comparación tolerante:
+      - Descompone caracteres Unicode (NFD) y elimina diacríticos (tildes, diéresis).
+      - Pasa a minúsculas.
+      - Colapsa espacios múltiples.
+    Ejemplo: "Administración de Sistemas" → "administracion de sistemas"
+    """
+    sin_tildes = "".join(
+        c for c in unicodedata.normalize("NFD", texto)
+        if unicodedata.category(c) != "Mn"
+    )
+    return " ".join(sin_tildes.lower().split())
+
+
+def _similitud_simple(a: str, b: str) -> float:
+    """
+    Similitud de bigramas entre dos strings normalizados.
+    Devuelve un valor entre 0.0 (nada en común) y 1.0 (idénticos).
+    No requiere librerías externas.
+    """
+    def bigramas(s: str) -> set:
+        return {s[i:i+2] for i in range(len(s) - 1)} if len(s) > 1 else {s}
+
+    bg_a = bigramas(a)
+    bg_b = bigramas(b)
+    if not bg_a or not bg_b:
+        return 1.0 if a == b else 0.0
+    interseccion = len(bg_a & bg_b)
+    return (2.0 * interseccion) / (len(bg_a) + len(bg_b))
+
+
+def encontrar_mejor_match(texto_buscado: str, candidatos: list[str], umbral: float = 0.60) -> tuple[str | None, float]:
+    """
+    Dado un texto buscado y una lista de candidatos (leídos del DOM),
+    devuelve (mejor_match, score) si supera el umbral, o (None, 0.0).
+
+    Estrategia en capas:
+      1. Coincidencia exacta (normalizada) → score 1.0
+      2. Uno contiene al otro (normalizado) → score 0.95
+      3. Similitud de bigramas → score variable
+    """
+    norm_buscado = normalizar_texto(texto_buscado)
+
+    mejor_match = None
+    mejor_score = 0.0
+
+    for candidato in candidatos:
+        norm_candidato = normalizar_texto(candidato)
+
+        # Capa 1: exacto normalizado
+        if norm_candidato == norm_buscado:
+            log.debug(f"  ✔ Match exacto normalizado: '{candidato}'")
+            return candidato, 1.0
+
+        # Capa 2: contención (útil cuando el form agrega "- Comisión 401" al nombre)
+        if norm_buscado in norm_candidato or norm_candidato in norm_buscado:
+            score = 0.95
+            if score > mejor_score:
+                mejor_score = score
+                mejor_match = candidato
+
+        # Capa 3: bigramas
+        score = _similitud_simple(norm_buscado, norm_candidato)
+        if score > mejor_score:
+            mejor_score = score
+            mejor_match = candidato
+
+    if mejor_score >= umbral:
+        log.info(
+            f"  ✔ Mejor match fuzzy para '{texto_buscado}': "
+            f"'{mejor_match}' (score={mejor_score:.2f})"
+        )
+        return mejor_match, mejor_score
+
+    log.warn(
+        f"  ✘ Sin match aceptable para '{texto_buscado}'. "
+        f"Mejor fue '{mejor_match}' con score={mejor_score:.2f} (umbral={umbral}). "
+        f"Candidatos disponibles: {candidatos}"
+    )
+    return None, mejor_score
 
 
 def dia_semana_actual() -> str:
@@ -246,7 +332,8 @@ def git_commit_push(mensaje: str = "bot: actualizar log.json") -> bool:
 def _dump_diagnostico(page) -> None:
     """
     Volcado de diagnóstico completo cuando algo falla.
-    Imprime todo lo que hay en el DOM para facilitar el debug.
+    Imprime todo lo que hay en el DOM para facilitar el debug,
+    incluyendo los valores normalizados para detectar diferencias de tildes/mayúsculas.
     """
     log.trace("═══ INICIO DIAGNÓSTICO DE PÁGINA ═══")
     try:
@@ -264,7 +351,9 @@ def _dump_diagnostico(page) -> None:
         if labels_limpios:
             log.trace(f"aria-labels encontrados ({len(labels_limpios)}):")
             for lbl in labels_limpios:
-                log.trace(f"  · '{lbl}'")
+                norm = normalizar_texto(lbl)
+                # Mostrar original Y normalizado para detectar diferencias ocultas
+                log.trace(f"  · '{lbl}'  →  norm: '{norm}'")
         else:
             log.trace("No se encontró ningún span[aria-label] en la página.")
     except Exception as e:
@@ -301,22 +390,57 @@ def _dump_diagnostico(page) -> None:
 
 def _seleccionar_opcion_radio(page, texto: str) -> bool:
     """
-    Selecciona una opción en Microsoft Forms por su aria-label exacto.
-    Prueba múltiples estrategias de selector en cascada.
-    Retorna True si tuvo éxito, False si no encontró la opción (sin lanzar).
-    """
-    log.trace(f"Buscando opción: '{texto}'")
+    Selecciona una opción en Microsoft Forms con tolerancia a variaciones
+    de mayúsculas, tildes y diferencias tipográficas menores.
 
-    # Estrategias de selector en orden de especificidad
+    Flujo:
+      1. Recolecta TODOS los aria-labels visibles del DOM actual.
+      2. Busca el mejor match fuzzy contra `texto` (normalizado).
+      3. Si lo encuentra, intenta seleccionarlo con múltiples estrategias de selector.
+      4. Si el match exacto falla (aria-label cambió), recae en get_by_text fuzzy.
+
+    Retorna True si tuvo éxito, False si no encontró la opción.
+    """
+    log.trace(f"Buscando opción (fuzzy): '{texto}'")
+
+    # ── Paso 1: leer todos los aria-labels disponibles en el DOM ─────────────
+    candidatos: list[str] = []
+    try:
+        raw = page.locator("span[aria-label]").all_attribute_values("aria-label")
+        candidatos = [v for v in raw if v and v.strip()]
+    except Exception as e:
+        log.debug(f"  No se pudieron leer aria-labels: {e}")
+
+    # También incluir textos visibles de labels y spans (fallback más amplio)
+    if not candidatos:
+        try:
+            raw2 = page.locator("label, span, div[role='radio']").all_text_contents()
+            candidatos = [v.strip() for v in raw2 if v and v.strip() and len(v.strip()) > 1]
+        except Exception:
+            pass
+
+    log.debug(f"  Candidatos en DOM ({len(candidatos)}): {candidatos[:10]}{'...' if len(candidatos) > 10 else ''}")
+
+    # ── Paso 2: encontrar el mejor match ─────────────────────────────────────
+    texto_real, score = encontrar_mejor_match(texto, candidatos)
+
+    if texto_real is None:
+        # Sin candidatos válidos o score muy bajo — dump de diagnóstico
+        log.warn(f"Opción '{texto}' no encontrada con fuzzy matching.")
+        _dump_diagnostico(page)
+        return False
+
+    # Si el texto_real difiere del buscado, loguear la sustitución
+    if texto_real != texto:
+        log.info(f"  Sustituyendo '{texto}' → '{texto_real}' (score={score:.2f})")
+
+    # ── Paso 3: intentar seleccionar con el texto_real encontrado ────────────
     estrategias = [
-        # 1. Selector principal de MS Forms: label que contiene span con aria-label exacto
-        f"label:has(span[aria-label='{texto}'])",
-        # 2. Variante con div contenedor (algunas versiones del form)
-        f"div[aria-label='{texto}']",
-        # 3. Por texto del span (sin aria-label)
-        f"span:text-is('{texto}')",
-        # 4. Por texto parcial del label (fallback menos preciso)
-        f"label:has-text('{texto}')",
+        f"label:has(span[aria-label='{texto_real}'])",
+        f"div[aria-label='{texto_real}']",
+        f"span[aria-label='{texto_real}']",
+        f"span:text-is('{texto_real}')",
+        f"label:has-text('{texto_real}')",
     ]
 
     for i, selector in enumerate(estrategias, 1):
@@ -337,21 +461,35 @@ def _seleccionar_opcion_radio(page, texto: str) -> bool:
                 input_interno = elemento.locator("input")
                 marcado = input_interno.is_checked()
                 if marcado:
-                    log.ok(f"Opción '{texto}' seleccionada y verificada (estrategia {i}).")
+                    log.ok(f"Opción '{texto_real}' seleccionada y verificada (estrategia {i}).")
                 else:
-                    log.warn(f"Clic en '{texto}' OK pero el input no reporta checked.")
+                    log.warn(f"Clic en '{texto_real}' OK pero el input no reporta checked.")
                 return True
             except Exception:
-                log.ok(f"Opción '{texto}' clickeada (no se pudo verificar checked).")
+                log.ok(f"Opción '{texto_real}' clickeada (verificación de checked no disponible).")
                 return True
 
         except PlaywrightTimeoutError:
-            log.debug(f"  Estrategia {i} '{selector[:50]}': timeout.")
+            log.debug(f"  Estrategia {i} '{selector[:60]}': timeout.")
         except Exception as e:
-            log.debug(f"  Estrategia {i} '{selector[:50]}': {type(e).__name__}.")
+            log.debug(f"  Estrategia {i} '{selector[:60]}': {type(e).__name__}.")
 
-    # Ninguna estrategia funcionó
-    log.warn(f"Opción '{texto}' no encontrada con ningún selector.")
+    # ── Paso 4: fallback — get_by_text con el texto normalizado ──────────────
+    log.warn(f"Selectores exactos fallaron para '{texto_real}'. Intentando get_by_text fuzzy...")
+    norm = normalizar_texto(texto_real)
+    try:
+        # Buscar elementos que contengan el texto normalizado (case-insensitive via JS)
+        elemento = page.locator(
+            f"label, span, div[role='radio'], div[role='option']"
+        ).filter(has_text=texto_real).first
+        elemento.wait_for(state="attached", timeout=ELEMENT_TIMEOUT)
+        elemento.click(timeout=ELEMENT_TIMEOUT)
+        page.wait_for_timeout(600)
+        log.ok(f"Opción '{texto_real}' clickeada via fallback get_by_text.")
+        return True
+    except Exception as e:
+        log.error(f"Fallback get_by_text también falló para '{texto_real}': {e}")
+
     _dump_diagnostico(page)
     return False
 
