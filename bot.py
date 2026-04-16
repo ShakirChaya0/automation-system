@@ -12,7 +12,7 @@ import sys
 import time
 import traceback
 import unicodedata
-from datetime import datetime, time as dt_time
+from datetime import datetime, time as dt_time, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -33,16 +33,20 @@ TELEGRAM_TOKEN   = os.environ.get("TELEGRAM_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
 # Espera humanizada: mínimo 30s, máximo el 40% del tiempo restante en la ventana
-# (evita esperar más de lo que queda de clase)
 MIN_WAIT_SECONDS = 30
 MAX_WAIT_SECONDS = 480  # 8 min tope absoluto
+
+# Ventana de gracia ANTES de hora_inicio (minutos).
+# Compensa el delay variable del cron de GitHub Actions (hasta ~10-15 min).
+# Si el bot corre a las 11:17 y la clase arranca a las 11:20, igual la procesa.
+GRACE_MINUTES = 15
 
 # Playwright
 PAGE_TIMEOUT    = 30_000   # ms para operaciones normales
 NAV_TIMEOUT     = 45_000   # ms para navegación (MS Forms puede tardar)
 ELEMENT_TIMEOUT = 8_000    # ms para esperar elementos individuales
 
-# Reintentos ante errores transitorios (red, timeout)
+# Reintentos ante errores transitorios dentro del mismo run
 MAX_REINTENTOS  = 2
 
 
@@ -67,6 +71,7 @@ class Logger:
     def warn(self,  msg: str) -> None: self._log("WARN",  msg)
     def error(self, msg: str) -> None: self._log("ERROR", msg)
     def trace(self, msg: str) -> None: self._log("TRACE", msg)
+
     def separador(self, titulo: str = "") -> None:
         linea = "─" * 55
         if titulo:
@@ -116,91 +121,6 @@ def normalizar_dia(dia: str) -> str:
     return dia.lower().translate(tabla)
 
 
-# ─── Normalización y coincidencia fuzzy ──────────────────────────────────────
-
-def normalizar_texto(texto: str) -> str:
-    """
-    Normalización canónica para comparación tolerante:
-      - Descompone caracteres Unicode (NFD) y elimina diacríticos (tildes, diéresis).
-      - Pasa a minúsculas.
-      - Colapsa espacios múltiples.
-    Ejemplo: "Administración de Sistemas" → "administracion de sistemas"
-    """
-    sin_tildes = "".join(
-        c for c in unicodedata.normalize("NFD", texto)
-        if unicodedata.category(c) != "Mn"
-    )
-    return " ".join(sin_tildes.lower().split())
-
-
-def _similitud_simple(a: str, b: str) -> float:
-    """
-    Similitud de bigramas entre dos strings normalizados.
-    Devuelve un valor entre 0.0 (nada en común) y 1.0 (idénticos).
-    No requiere librerías externas.
-    """
-    def bigramas(s: str) -> set:
-        return {s[i:i+2] for i in range(len(s) - 1)} if len(s) > 1 else {s}
-
-    bg_a = bigramas(a)
-    bg_b = bigramas(b)
-    if not bg_a or not bg_b:
-        return 1.0 if a == b else 0.0
-    interseccion = len(bg_a & bg_b)
-    return (2.0 * interseccion) / (len(bg_a) + len(bg_b))
-
-
-def encontrar_mejor_match(texto_buscado: str, candidatos: list[str], umbral: float = 0.60) -> tuple[str | None, float]:
-    """
-    Dado un texto buscado y una lista de candidatos (leídos del DOM),
-    devuelve (mejor_match, score) si supera el umbral, o (None, 0.0).
-
-    Estrategia en capas:
-      1. Coincidencia exacta (normalizada) → score 1.0
-      2. Uno contiene al otro (normalizado) → score 0.95
-      3. Similitud de bigramas → score variable
-    """
-    norm_buscado = normalizar_texto(texto_buscado)
-
-    mejor_match = None
-    mejor_score = 0.0
-
-    for candidato in candidatos:
-        norm_candidato = normalizar_texto(candidato)
-
-        # Capa 1: exacto normalizado
-        if norm_candidato == norm_buscado:
-            log.debug(f"  ✔ Match exacto normalizado: '{candidato}'")
-            return candidato, 1.0
-
-        # Capa 2: contención (útil cuando el form agrega "- Comisión 401" al nombre)
-        if norm_buscado in norm_candidato or norm_candidato in norm_buscado:
-            score = 0.95
-            if score > mejor_score:
-                mejor_score = score
-                mejor_match = candidato
-
-        # Capa 3: bigramas
-        score = _similitud_simple(norm_buscado, norm_candidato)
-        if score > mejor_score:
-            mejor_score = score
-            mejor_match = candidato
-
-    if mejor_score >= umbral:
-        log.info(
-            f"  ✔ Mejor match fuzzy para '{texto_buscado}': "
-            f"'{mejor_match}' (score={mejor_score:.2f})"
-        )
-        return mejor_match, mejor_score
-
-    log.warn(
-        f"  ✘ Sin match aceptable para '{texto_buscado}'. "
-        f"Mejor fue '{mejor_match}' con score={mejor_score:.2f} (umbral={umbral}). "
-        f"Candidatos disponibles: {candidatos}"
-    )
-    return None, mejor_score
-
-
 def dia_semana_actual() -> str:
     nombres = {0: "lunes", 1: "martes", 2: "miercoles",
                3: "jueves", 4: "viernes", 5: "sabado", 6: "domingo"}
@@ -217,10 +137,24 @@ def segundos_restantes_en_ventana(hora_fin: dt_time) -> int:
     return max(0, int(delta))
 
 
+def en_ventana(hora_actual: dt_time, h_inicio: dt_time, h_fin: dt_time) -> bool:
+    """
+    Verifica si hora_actual está dentro de la ventana [h_inicio - GRACE_MINUTES, h_fin].
+    La ventana de gracia compensa los delays del cron de GitHub Actions.
+    """
+    # Calcular inicio con gracia (restar GRACE_MINUTES)
+    dt_dummy  = datetime(2000, 1, 1, h_inicio.hour, h_inicio.minute)
+    dt_gracia = dt_dummy - timedelta(minutes=GRACE_MINUTES)
+    h_inicio_con_gracia = dt_gracia.time()
+
+    return h_inicio_con_gracia <= hora_actual <= h_fin
+
+
 def validar_materia(m: dict, idx: int) -> list[str]:
     """Valida los campos requeridos de una entrada de materias.json."""
     errores = []
-    campos  = ["nombre_materia", "comision", "link", "dia", "hora_inicio", "hora_fin", "nombre_alumno"]
+    campos  = ["nombre_materia", "carrera", "comision", "link", "dia",
+               "hora_inicio", "hora_fin", "nombre_alumno"]
     for campo in campos:
         if not m.get(campo):
             errores.append(f"campo '{campo}' vacío o ausente")
@@ -233,6 +167,88 @@ def validar_materia(m: dict, idx: int) -> list[str]:
     if errores:
         log.warn(f"Materia [{idx}] '{m.get('nombre_materia','?')}': {'; '.join(errores)}")
     return errores
+
+
+# ─── Normalización y coincidencia fuzzy ──────────────────────────────────────
+
+def normalizar_texto(texto: str) -> str:
+    """
+    Normalización canónica: elimina diacríticos, pasa a minúsculas,
+    colapsa espacios múltiples.
+    Ejemplo: "Administración de Sistemas" → "administracion de sistemas"
+    """
+    sin_tildes = "".join(
+        c for c in unicodedata.normalize("NFD", texto)
+        if unicodedata.category(c) != "Mn"
+    )
+    return " ".join(sin_tildes.lower().split())
+
+
+def _similitud_bigramas(a: str, b: str) -> float:
+    """
+    Similitud de bigramas entre dos strings normalizados.
+    Devuelve un valor entre 0.0 y 1.0. No requiere librerías externas.
+    """
+    def bigramas(s: str) -> set:
+        return {s[i:i+2] for i in range(len(s) - 1)} if len(s) > 1 else {s}
+
+    bg_a, bg_b = bigramas(a), bigramas(b)
+    if not bg_a or not bg_b:
+        return 1.0 if a == b else 0.0
+    return (2.0 * len(bg_a & bg_b)) / (len(bg_a) + len(bg_b))
+
+
+def encontrar_mejor_match(
+    texto_buscado: str,
+    candidatos: list[str],
+    umbral: float = 0.60
+) -> tuple[str | None, float]:
+    """
+    Dado un texto buscado y una lista de candidatos leídos del DOM,
+    devuelve (mejor_match, score) si supera el umbral, o (None, 0.0).
+
+    Estrategia en capas:
+      1. Coincidencia exacta normalizada → score 1.0
+      2. Contención: uno está dentro del otro → score 0.95
+         (útil cuando el form agrega prefijos como "4K1 - Legislación")
+      3. Similitud de bigramas → score variable
+    """
+    norm_buscado = normalizar_texto(texto_buscado)
+    mejor_match  = None
+    mejor_score  = 0.0
+
+    for candidato in candidatos:
+        norm_cand = normalizar_texto(candidato)
+
+        # Capa 1: exacto normalizado
+        if norm_cand == norm_buscado:
+            log.debug(f"  ✔ Match exacto: '{candidato}'")
+            return candidato, 1.0
+
+        # Capa 2: contención
+        if norm_buscado in norm_cand or norm_cand in norm_buscado:
+            score = 0.95
+        else:
+            # Capa 3: bigramas
+            score = _similitud_bigramas(norm_buscado, norm_cand)
+
+        if score > mejor_score:
+            mejor_score = score
+            mejor_match = candidato
+
+    if mejor_score >= umbral:
+        log.info(
+            f"  ✔ Fuzzy match: '{texto_buscado}' → '{mejor_match}' "
+            f"(score={mejor_score:.2f})"
+        )
+        return mejor_match, mejor_score
+
+    log.warn(
+        f"  ✘ Sin match para '{texto_buscado}'. "
+        f"Mejor fue '{mejor_match}' con score={mejor_score:.2f} (umbral={umbral}). "
+        f"Candidatos disponibles: {candidatos}"
+    )
+    return None, mejor_score
 
 
 # ─── Telegram ─────────────────────────────────────────────────────────────────
@@ -249,14 +265,16 @@ def enviar_telegram(mensaje: str, foto_path: Path | None = None) -> bool:
             with open(foto_path, "rb") as foto:
                 resp = httpx.post(
                     f"{base}/sendPhoto",
-                    data={"chat_id": TELEGRAM_CHAT_ID, "caption": mensaje, "parse_mode": "HTML"},
+                    data={"chat_id": TELEGRAM_CHAT_ID, "caption": mensaje,
+                          "parse_mode": "HTML"},
                     files={"photo": foto},
                     timeout=20,
                 )
         else:
             resp = httpx.post(
                 f"{base}/sendMessage",
-                json={"chat_id": TELEGRAM_CHAT_ID, "text": mensaje, "parse_mode": "HTML"},
+                json={"chat_id": TELEGRAM_CHAT_ID, "text": mensaje,
+                      "parse_mode": "HTML"},
                 timeout=20,
             )
         resp.raise_for_status()
@@ -307,12 +325,15 @@ def git_commit_push(mensaje: str = "bot: actualizar log.json") -> bool:
         return subprocess.run(cmd, check=True, capture_output=True, text=True)
 
     try:
-        run(["git", "config", "user.name",  "asistencia-bot"])
-        run(["git", "config", "user.email", "bot@asistencia.local"])
+        git_name  = os.environ.get("GIT_USER_NAME",  "asistencia-bot")
+        git_email = os.environ.get("GIT_USER_EMAIL", "bot@asistencia.local")
+        run(["git", "config", "user.name",  git_name])
+        run(["git", "config", "user.email", git_email])
         run(["git", "add", str(LOG_FILE)])
 
-        # ¿Hay cambios staged?
-        diff = subprocess.run(["git", "diff", "--cached", "--quiet"], capture_output=True)
+        diff = subprocess.run(
+            ["git", "diff", "--cached", "--quiet"], capture_output=True
+        )
         if diff.returncode == 0:
             log.info("log.json sin cambios. Nada que commitear.")
             return True
@@ -327,227 +348,27 @@ def git_commit_push(mensaje: str = "bot: actualizar log.json") -> bool:
         return False
 
 
-# ─── Automatización Microsoft Forms ───────────────────────────────────────────
-
-def _dump_diagnostico(page) -> None:
-    """
-    Volcado de diagnóstico completo cuando algo falla.
-    Imprime todo lo que hay en el DOM para facilitar el debug,
-    incluyendo los valores normalizados para detectar diferencias de tildes/mayúsculas.
-    """
-    log.trace("═══ INICIO DIAGNÓSTICO DE PÁGINA ═══")
-    try:
-        url_actual = page.url
-        titulo     = page.title()
-        log.trace(f"URL actual : {url_actual}")
-        log.trace(f"Título     : {titulo}")
-    except Exception:
-        log.trace("No se pudo obtener URL/título.")
-
-    try:
-        # Todos los aria-labels disponibles (opciones de radio/checkbox)
-        labels = page.locator("span[aria-label]").all_attribute_values("aria-label")
-        labels_limpios = [l for l in labels if l and l.strip()]
-        if labels_limpios:
-            log.trace(f"aria-labels encontrados ({len(labels_limpios)}):")
-            for lbl in labels_limpios:
-                norm = normalizar_texto(lbl)
-                # Mostrar original Y normalizado para detectar diferencias ocultas
-                log.trace(f"  · '{lbl}'  →  norm: '{norm}'")
-        else:
-            log.trace("No se encontró ningún span[aria-label] en la página.")
-    except Exception as e:
-        log.trace(f"Error al leer aria-labels: {e}")
-
-    try:
-        # Textos visibles de botones
-        botones = page.locator("button, [role='button']").all_text_contents()
-        botones_limpios = [b.strip() for b in botones if b.strip()]
-        if botones_limpios:
-            log.trace(f"Botones visibles: {botones_limpios}")
-    except Exception:
-        pass
-
-    try:
-        # Mensajes de error del formulario
-        errores_form = page.locator("[data-automation-id='error-message'], .office-form-error").all_text_contents()
-        if errores_form:
-            log.trace(f"⚠️ Errores del formulario: {errores_form}")
-    except Exception:
-        pass
-
-    try:
-        # Pregunta actual (heading del formulario)
-        headings = page.locator("h1, h2, [role='heading']").all_text_contents()
-        headings_limpios = [h.strip() for h in headings if h.strip()]
-        if headings_limpios:
-            log.trace(f"Headings en página: {headings_limpios}")
-    except Exception:
-        pass
-
-    log.trace("═══ FIN DIAGNÓSTICO ═══")
-
-
-def _seleccionar_opcion_radio(page, texto: str) -> bool:
-    """
-    Selecciona una opción en Microsoft Forms con tolerancia a variaciones
-    de mayúsculas, tildes y diferencias tipográficas menores.
-
-    Flujo:
-      1. Recolecta TODOS los aria-labels visibles del DOM actual.
-      2. Busca el mejor match fuzzy contra `texto` (normalizado).
-      3. Si lo encuentra, intenta seleccionarlo con múltiples estrategias de selector.
-      4. Si el match exacto falla (aria-label cambió), recae en get_by_text fuzzy.
-
-    Retorna True si tuvo éxito, False si no encontró la opción.
-    """
-    log.trace(f"Buscando opción (fuzzy): '{texto}'")
-
-    # ── Paso 1: leer todos los aria-labels disponibles en el DOM ─────────────
-    candidatos: list[str] = []
-    try:
-        raw = page.locator("span[aria-label]").all_attribute_values("aria-label")
-        candidatos = [v for v in raw if v and v.strip()]
-    except Exception as e:
-        log.debug(f"  No se pudieron leer aria-labels: {e}")
-
-    # También incluir textos visibles de labels y spans (fallback más amplio)
-    if not candidatos:
-        try:
-            raw2 = page.locator("label, span, div[role='radio']").all_text_contents()
-            candidatos = [v.strip() for v in raw2 if v and v.strip() and len(v.strip()) > 1]
-        except Exception:
-            pass
-
-    log.debug(f"  Candidatos en DOM ({len(candidatos)}): {candidatos[:10]}{'...' if len(candidatos) > 10 else ''}")
-
-    # ── Paso 2: encontrar el mejor match ─────────────────────────────────────
-    texto_real, score = encontrar_mejor_match(texto, candidatos)
-
-    if texto_real is None:
-        # Sin candidatos válidos o score muy bajo — dump de diagnóstico
-        log.warn(f"Opción '{texto}' no encontrada con fuzzy matching.")
-        _dump_diagnostico(page)
-        return False
-
-    # Si el texto_real difiere del buscado, loguear la sustitución
-    if texto_real != texto:
-        log.info(f"  Sustituyendo '{texto}' → '{texto_real}' (score={score:.2f})")
-
-    # ── Paso 3: intentar seleccionar con el texto_real encontrado ────────────
-    estrategias = [
-        f"label:has(span[aria-label='{texto_real}'])",
-        f"div[aria-label='{texto_real}']",
-        f"span[aria-label='{texto_real}']",
-        f"span:text-is('{texto_real}')",
-        f"label:has-text('{texto_real}')",
-    ]
-
-    for i, selector in enumerate(estrategias, 1):
-        try:
-            elemento = page.locator(selector).first
-            elemento.wait_for(state="attached", timeout=ELEMENT_TIMEOUT)
-
-            if not elemento.is_visible():
-                log.debug(f"  Estrategia {i}: encontrado pero no visible, haciendo scroll...")
-                elemento.scroll_into_view_if_needed()
-                page.wait_for_timeout(400)
-
-            elemento.click(timeout=ELEMENT_TIMEOUT)
-            page.wait_for_timeout(600)
-
-            # Verificar si quedó seleccionado
-            try:
-                input_interno = elemento.locator("input")
-                marcado = input_interno.is_checked()
-                if marcado:
-                    log.ok(f"Opción '{texto_real}' seleccionada y verificada (estrategia {i}).")
-                else:
-                    log.warn(f"Clic en '{texto_real}' OK pero el input no reporta checked.")
-                return True
-            except Exception:
-                log.ok(f"Opción '{texto_real}' clickeada (verificación de checked no disponible).")
-                return True
-
-        except PlaywrightTimeoutError:
-            log.debug(f"  Estrategia {i} '{selector[:60]}': timeout.")
-        except Exception as e:
-            log.debug(f"  Estrategia {i} '{selector[:60]}': {type(e).__name__}.")
-
-    # ── Paso 4: fallback — get_by_text con el texto normalizado ──────────────
-    log.warn(f"Selectores exactos fallaron para '{texto_real}'. Intentando get_by_text fuzzy...")
-    norm = normalizar_texto(texto_real)
-    try:
-        # Buscar elementos que contengan el texto normalizado (case-insensitive via JS)
-        elemento = page.locator(
-            f"label, span, div[role='radio'], div[role='option']"
-        ).filter(has_text=texto_real).first
-        elemento.wait_for(state="attached", timeout=ELEMENT_TIMEOUT)
-        elemento.click(timeout=ELEMENT_TIMEOUT)
-        page.wait_for_timeout(600)
-        log.ok(f"Opción '{texto_real}' clickeada via fallback get_by_text.")
-        return True
-    except Exception as e:
-        log.error(f"Fallback get_by_text también falló para '{texto_real}': {e}")
-
-    _dump_diagnostico(page)
-    return False
-
-
-def _completar_campo_texto(page, texto: str) -> bool:
-    """
-    Busca campos de texto vacíos y completa el primero disponible.
-    Retorna True si completó alguno.
-    """
-    selectores = [
-        "input[type='text']:visible",
-        "input[type='search']:visible",
-        "textarea:visible",
-    ]
-    for selector in selectores:
-        try:
-            inputs = page.locator(selector).all()
-            for inp in inputs:
-                try:
-                    if inp.is_visible() and inp.input_value() == "":
-                        inp.fill(texto)
-                        log.debug(f"Campo de texto completado con '{texto}'.")
-                        page.wait_for_timeout(400)
-                        return True
-                except Exception:
-                    continue
-        except Exception:
-            continue
-    return False
-
-
 # ─── Excepción específica para formulario cerrado ────────────────────────────
 
 class FormularioCerradoError(Exception):
     """
-    Se lanza cuando el formulario ya no acepta respuestas.
-    A diferencia de un error de red/timeout, este estado es definitivo:
-    no tiene sentido reintentar, y NO debe contar como fallo del bot.
+    Se lanza cuando el formulario no acepta respuestas.
+    No es un error del bot — no se reintenta ni se marca el job como fallido.
     """
 
 
 # ─── Mensajes de cierre conocidos (MS Forms, multilenguaje) ──────────────────
 
 _MENSAJES_FORMULARIO_CERRADO = [
-    # Español
     "ya no se aceptan respuestas",
     "este formulario ya no acepta",
     "el formulario está cerrado",
     "no se aceptan más respuestas",
-    # Inglés (por si el tenant tiene otro idioma)
     "this form is no longer accepting responses",
     "form is closed",
     "no longer accepting responses",
-    # Portugués (raro, pero por si acaso)
-    "este formulário não está mais aceitando respostas",
 ]
 
-# Selector exacto del elemento que Microsoft Forms usa para el error
 _SELECTOR_ERROR_MSFORMS = (
     "[data-automation-id='errorTitle'],"
     "[data-automation-id='error-title'],"
@@ -556,59 +377,269 @@ _SELECTOR_ERROR_MSFORMS = (
 )
 
 
+# ─── Automatización Microsoft Forms ───────────────────────────────────────────
+
+_RADIO_BASE = "span[data-automation-id='radio']"
+
+
+def _dump_diagnostico(page) -> None:
+    """
+    Volcado de diagnóstico completo al fallar.
+    Imprime URL, aria-labels disponibles (con versión normalizada),
+    botones visibles, errores del formulario y headings.
+    """
+    log.trace("═══ INICIO DIAGNÓSTICO DE PÁGINA ═══")
+    try:
+        log.trace(f"URL    : {page.url}")
+        log.trace(f"Título : {page.title()}")
+    except Exception:
+        log.trace("No se pudo obtener URL/título.")
+
+    try:
+        labels = page.locator("span[aria-label]").all_attribute_values("aria-label")
+        labels_limpios = [l for l in labels if l and l.strip()]
+        if labels_limpios:
+            log.trace(f"aria-labels encontrados ({len(labels_limpios)}):")
+            for lbl in labels_limpios:
+                log.trace(f"  · '{lbl}'  →  norm: '{normalizar_texto(lbl)}'")
+        else:
+            log.trace("No se encontró ningún span[aria-label].")
+    except Exception as e:
+        log.trace(f"Error al leer aria-labels: {e}")
+
+    try:
+        botones = [b.strip() for b in
+                   page.locator("button, [role='button']").all_text_contents()
+                   if b.strip()]
+        if botones:
+            log.trace(f"Botones visibles: {botones}")
+    except Exception:
+        pass
+
+    try:
+        errores = page.locator(
+            "[data-automation-id='error-message'], .office-form-error"
+        ).all_text_contents()
+        if errores:
+            log.trace(f"Errores del formulario: {errores}")
+    except Exception:
+        pass
+
+    try:
+        headings = [h.strip() for h in
+                    page.locator("h1, h2, [role='heading']").all_text_contents()
+                    if h.strip()]
+        if headings:
+            log.trace(f"Headings: {headings}")
+    except Exception:
+        pass
+
+    log.trace("═══ FIN DIAGNÓSTICO ═══")
+
+
+def _leer_radios_visibles(page) -> list[str]:
+    """
+    Lee los valores de todos los radio buttons visibles.
+    Fuente primaria: data-automation-value. Fallback: aria-label.
+    """
+    valores: list[str] = []
+    try:
+        raw = page.locator(_RADIO_BASE).all_attribute_values("data-automation-value")
+        valores = [v.strip() for v in raw if v and v.strip()]
+    except Exception:
+        pass
+
+    if not valores:
+        try:
+            raw2 = page.locator("span[aria-label]").all_attribute_values("aria-label")
+            valores = [v.strip() for v in raw2 if v and v.strip()]
+        except Exception:
+            pass
+
+    return valores
+
+
+def _contar_radios_visibles(page) -> int:
+    try:
+        return page.locator(_RADIO_BASE).count()
+    except Exception:
+        return 0
+
+
+def _esperar_nuevos_radios(page, cuenta_previa: int, timeout_ms: int = 10_000) -> bool:
+    """
+    Espera hasta que aparezcan MÁS radio buttons que los previos.
+    Señal de que el form renderizó la siguiente pregunta.
+    """
+    intervalo    = 300
+    transcurrido = 0
+    while transcurrido < timeout_ms:
+        if _contar_radios_visibles(page) > cuenta_previa:
+            return True
+        page.wait_for_timeout(intervalo)
+        transcurrido += intervalo
+    return False
+
+
+def _seleccionar_radio(page, texto: str, paso: str) -> None:
+    """
+    Selecciona un radio button en MS Forms usando fuzzy matching.
+
+    Flujo:
+      1. Lee todos los data-automation-value visibles.
+      2. Encuentra el mejor match fuzzy contra `texto`.
+      3. Intenta click con 4 estrategias de selector en cascada.
+      4. Como último recurso: label con texto visible (filtro has_text).
+
+    Lanza RuntimeError si ninguna estrategia funciona.
+    """
+    log.info(f"  [{paso}] Buscando: '{texto}'")
+
+    candidatos = _leer_radios_visibles(page)
+    log.debug(f"    Radios visibles ({len(candidatos)}): {candidatos}")
+
+    if not candidatos:
+        _dump_diagnostico(page)
+        raise RuntimeError(f"[{paso}] No se encontraron radio buttons en el DOM.")
+
+    texto_real, score = encontrar_mejor_match(texto, candidatos)
+
+    if texto_real is None:
+        _dump_diagnostico(page)
+        raise RuntimeError(
+            f"[{paso}] Sin match para '{texto}'. "
+            f"Candidatos disponibles: {candidatos}"
+        )
+
+    if texto_real != texto:
+        log.info(f"    Fuzzy: '{texto}' → '{texto_real}' (score={score:.2f})")
+
+    # Estrategias principales (en orden de preferencia)
+    estrategias = [
+        (f"{_RADIO_BASE}[data-automation-value='{texto_real}']",
+         "data-automation-value"),
+        (f"span[aria-label='{texto_real}']",
+         "aria-label"),
+        (f"label:has(span[aria-label='{texto_real}'])",
+         "label>aria-label"),
+        (f"label:has({_RADIO_BASE}[data-automation-value='{texto_real}'])",
+         "label>data-value"),
+    ]
+
+    for selector, nombre_estrategia in estrategias:
+        try:
+            elem = page.locator(selector).first
+            elem.wait_for(state="attached", timeout=ELEMENT_TIMEOUT)
+            if not elem.is_visible():
+                elem.scroll_into_view_if_needed()
+                page.wait_for_timeout(300)
+            elem.click(timeout=ELEMENT_TIMEOUT)
+            page.wait_for_timeout(500)
+
+            # Verificar que quedó checked
+            try:
+                label_parent = page.locator(
+                    f"label:has({_RADIO_BASE}"
+                    f"[data-automation-value='{texto_real}'])"
+                ).first
+                inp = label_parent.locator("input[role='radio']").first
+                if inp.is_checked():
+                    log.ok(
+                        f"    [{paso}] '{texto_real}' seleccionado ✔ "
+                        f"({nombre_estrategia})"
+                    )
+                else:
+                    log.warn(
+                        f"    [{paso}] Click OK pero input no reporta "
+                        f"checked ({nombre_estrategia})."
+                    )
+            except Exception:
+                log.ok(
+                    f"    [{paso}] '{texto_real}' clickeado "
+                    f"({nombre_estrategia}, sin verificar checked)."
+                )
+            return  # ← Éxito
+
+        except PlaywrightTimeoutError:
+            log.debug(f"    Estrategia '{nombre_estrategia}': timeout.")
+        except Exception as e:
+            log.debug(f"    Estrategia '{nombre_estrategia}': {type(e).__name__}.")
+
+    # ── Estrategia 5 (último recurso): label por texto visible ───────────────
+    try:
+        elem = page.locator("label").filter(has_text=texto_real).first
+        elem.wait_for(state="attached", timeout=ELEMENT_TIMEOUT)
+        elem.click(timeout=ELEMENT_TIMEOUT)
+        page.wait_for_timeout(500)
+        log.ok(f"    [{paso}] '{texto_real}' clickeado vía label fallback.")
+        return
+    except Exception as e:
+        log.debug(f"    Fallback label: {type(e).__name__}.")
+
+    # Ninguna estrategia funcionó
+    _dump_diagnostico(page)
+    raise RuntimeError(
+        f"[{paso}] No se pudo seleccionar '{texto}' (match='{texto_real}'). "
+        "Revisá el log de diagnóstico arriba."
+    )
+
+
 def _verificar_formulario_activo(page, nombre_materia: str) -> None:
     """
-    Analiza el DOM recién cargado en busca de indicadores de formulario cerrado.
-
-    Estrategia en dos capas:
-      1. Selector estructural: busca el elemento exacto que MS Forms usa
-         (`data-automation-id='errorTitle'`). Es el más fiable.
-      2. Texto visible: escanea todo el contenido de la página normalizado
-         contra los mensajes conocidos. Cubre variantes de idioma y versiones
-         futuras del componente.
-
-    Lanza FormularioCerradoError si el formulario no acepta respuestas,
-    lo que impide que el bot siga intentando completar campos inexistentes.
+    Detecta si el formulario está cerrado antes de intentar completarlo.
+    Lanza FormularioCerradoError si no acepta respuestas.
     """
-    # ── Capa 1: selector estructural ─────────────────────────────────────────
+    # Capa 1: selector estructural de MS Forms
     try:
         error_elem = page.locator(_SELECTOR_ERROR_MSFORMS).first
         if error_elem.is_visible(timeout=3_000):
             texto_error = error_elem.text_content(timeout=2_000) or ""
             raise FormularioCerradoError(
-                f"El formulario rechazó la entrada · Mensaje del Form: \"{texto_error.strip()}\""
+                f"Mensaje del formulario: \"{texto_error.strip()}\""
             )
     except PlaywrightTimeoutError:
-        pass  # El selector no existe → formulario activo, seguir
+        pass
     except FormularioCerradoError:
-        raise  # Re-propagar la excepción que acabamos de crear
+        raise
     except Exception as e:
         log.debug(f"  Verificación estructural: {type(e).__name__} (ignorado)")
 
-    # ── Capa 2: texto visible de la página ───────────────────────────────────
+    # Capa 2: texto visible de la página
     try:
-        texto_pagina = normalizar_texto(page.locator("body").text_content(timeout=3_000) or "")
+        texto_pagina = normalizar_texto(
+            page.locator("body").text_content(timeout=3_000) or ""
+        )
         for msg in _MENSAJES_FORMULARIO_CERRADO:
             if normalizar_texto(msg) in texto_pagina:
                 raise FormularioCerradoError(
-                    f"Texto de cierre detectado en página: \"{msg}\""
+                    f"Texto de cierre detectado: \"{msg}\""
                 )
     except FormularioCerradoError:
         raise
     except Exception as e:
         log.debug(f"  Verificación textual: {type(e).__name__} (ignorado)")
 
-    log.ok(f"Formulario activo y listo para completar: '{nombre_materia}'")
+    log.ok(f"Formulario activo: '{nombre_materia}'")
 
 
 def completar_formulario(page, materia: dict) -> None:
     """
-    Navega y completa el formulario de Microsoft Forms.
-    Maneja formularios simples y multipágina (botón Siguiente/Next).
-    Lanza FormularioCerradoError si el form no acepta respuestas (sin reintentar).
-    Lanza RuntimeError ante otros fallos de navegación o envío.
+    Navega y completa el formulario de Microsoft Forms de forma secuencial.
+
+    El form tiene 4 preguntas encadenadas — cada una aparece solo después
+    de responder la anterior:
+
+        Paso 1 · Carrera   → habilita ↓
+        Paso 2 · Comisión  → habilita ↓
+        Paso 3 · Materia   → habilita ↓
+        Paso 4 · Alumno    → habilita ↓
+        Paso 5 · Enviar
+
+    Lanza FormularioCerradoError si el form no acepta respuestas.
+    Lanza RuntimeError ante fallos de navegación o selección.
     """
     nombre_materia = materia["nombre_materia"]
+    carrera        = materia["carrera"]
     comision       = materia["comision"]
     nombre_alumno  = materia["nombre_alumno"]
     link           = materia["link"]
@@ -616,122 +647,125 @@ def completar_formulario(page, materia: dict) -> None:
     log.separador(f"FORMULARIO: {nombre_materia}")
     log.info(f"Navegando → {link}")
 
-    # Cargar la página con timeout extendido
+    # ── 0. Cargar página ──────────────────────────────────────────────────────
     try:
         page.goto(link, wait_until="domcontentloaded", timeout=NAV_TIMEOUT)
     except PlaywrightTimeoutError:
-        log.warn("Timeout en domcontentloaded, continuando de todas formas...")
+        log.warn("Timeout en domcontentloaded, continuando...")
 
-    # Espera activa hasta que el formulario sea interactuable
     try:
         page.wait_for_load_state("networkidle", timeout=15_000)
     except PlaywrightTimeoutError:
         log.warn("networkidle no alcanzado en 15s, continuando...")
 
-    # ── VALIDACIÓN TEMPRANA: ¿el form acepta respuestas? ─────────────────────
-    # Se ejecuta ANTES de intentar interactuar con cualquier campo.
-    # Si el form está cerrado, lanza FormularioCerradoError y se aborta limpiamente.
     _verificar_formulario_activo(page, nombre_materia)
+    page.wait_for_timeout(1_500)
+    log.debug(f"Página lista. URL: {page.url} | Título: {page.title()}")
 
-    page.wait_for_timeout(2500)  # Pausa natural post-carga
-    log.debug(f"Página cargada. URL: {page.url} | Título: {page.title()}")
+    # ── Paso 1: Carrera ───────────────────────────────────────────────────────
+    log.separador("Paso 1 · Carrera")
+    try:
+        page.locator(_RADIO_BASE).first.wait_for(state="visible", timeout=10_000)
+    except PlaywrightTimeoutError:
+        _dump_diagnostico(page)
+        raise RuntimeError("Paso 1: no aparecieron radio buttons al cargar el form.")
 
-    paginas_procesadas = 0
-    max_paginas        = 15
+    radios_antes = _contar_radios_visibles(page)
+    _seleccionar_radio(page, carrera, "Carrera")
 
-    while paginas_procesadas < max_paginas:
-        paginas_procesadas += 1
-        log.separador(f"Sección {paginas_procesadas}")
+    # ── Paso 2: Comisión ──────────────────────────────────────────────────────
+    # Nota: el JSON guarda "401" pero el form puede mostrar "Comisión 401".
+    # El fuzzy matching por contención lo resuelve automáticamente.
+    log.separador("Paso 2 · Comisión")
+    if not _esperar_nuevos_radios(page, radios_antes):
+        _dump_diagnostico(page)
+        raise RuntimeError("Paso 2: la pregunta de Comisión no apareció.")
 
-        # ── Intentar completar campos ──────────────────────────────────────
-        # El orden importa: primero los más específicos
-        encontrado_comision = _seleccionar_opcion_radio(page, comision)
-        encontrado_materia  = _seleccionar_opcion_radio(page, nombre_materia)
-        encontrado_nombre   = _seleccionar_opcion_radio(page, nombre_alumno)
-        encontrado_texto    = _completar_campo_texto(page, nombre_alumno)
+    radios_antes = _contar_radios_visibles(page)
+    _seleccionar_radio(page, comision, "Comisión")
 
-        log.debug(
-            f"Resultados sección {paginas_procesadas}: "
-            f"comision={encontrado_comision} | materia={encontrado_materia} | "
-            f"nombre_radio={encontrado_nombre} | nombre_texto={encontrado_texto}"
+    # ── Paso 3: Materia ───────────────────────────────────────────────────────
+    # El form puede mostrar prefijos de plan: "4K1 - Legislación".
+    # El matching por contención encuentra "Legislación" dentro de ese texto.
+    log.separador("Paso 3 · Materia")
+    if not _esperar_nuevos_radios(page, radios_antes):
+        _dump_diagnostico(page)
+        raise RuntimeError("Paso 3: la pregunta de Materia no apareció.")
+
+    radios_antes = _contar_radios_visibles(page)
+    _seleccionar_radio(page, nombre_materia, "Materia")
+
+    # ── Paso 4: Alumno ────────────────────────────────────────────────────────
+    log.separador("Paso 4 · Alumno")
+    if not _esperar_nuevos_radios(page, radios_antes):
+        _dump_diagnostico(page)
+        raise RuntimeError("Paso 4: la lista de alumnos no apareció.")
+
+    _seleccionar_radio(page, nombre_alumno, "Alumno")
+
+    # ── Paso 5: Enviar ────────────────────────────────────────────────────────
+    log.separador("Paso 5 · Enviar")
+    page.wait_for_timeout(800)
+
+    selector_submit = (
+        "[data-automation-id='submitButton'], "
+        "button:has-text('Enviar'), "
+        "button:has-text('Submit')"
+    )
+    enviar = page.locator(selector_submit).first
+    try:
+        enviar.wait_for(state="visible", timeout=8_000)
+    except PlaywrightTimeoutError:
+        _dump_diagnostico(page)
+        raise RuntimeError(
+            "Paso 5: el botón Enviar no apareció. "
+            "Puede que falte completar algún campo anterior."
         )
 
-        page.wait_for_timeout(800)
+    log.info("  Botón Enviar encontrado → haciendo clic...")
+    enviar.click()
+    page.wait_for_timeout(3_500)
 
-        # ── ¿Hay botón Siguiente? ──────────────────────────────────────────
-        selector_siguiente = (
-            "button:has-text('Siguiente'), button:has-text('Next'), "
-            "[role='button']:has-text('Siguiente'), [role='button']:has-text('Next')"
-        )
-        siguiente = page.locator(selector_siguiente).first
+    # Verificar confirmación
+    confirmaciones = [
+        "Gracias", "Thank you", "Response recorded",
+        "Respuesta registrada", "Se ha enviado", "Your response",
+        "Formulario enviado", "form submitted",
+    ]
+    for conf in confirmaciones:
         try:
-            siguiente.wait_for(state="visible", timeout=3000)
-            log.info("Botón 'Siguiente' detectado → avanzando sección.")
-            siguiente.click()
-            page.wait_for_timeout(2000)
+            if page.locator(f"text={conf}").first.is_visible(timeout=2_500):
+                log.ok(f"  Confirmación detectada: '{conf}' ✅")
+                return
+        except PlaywrightTimeoutError:
             continue
-        except PlaywrightTimeoutError:
-            pass  # No hay Siguiente, buscar Enviar
 
-        # ── ¿Hay botón Enviar? ────────────────────────────────────────────
-        selector_enviar = (
-            "button:has-text('Enviar'), button:has-text('Submit'), "
-            "[role='button']:has-text('Enviar'), [role='button']:has-text('Submit')"
-        )
-        enviar = page.locator(selector_enviar).first
-        try:
-            enviar.wait_for(state="visible", timeout=5000)
-            log.info("Botón 'Enviar' detectado → enviando formulario.")
-            enviar.click()
-            page.wait_for_timeout(3500)
-
-            # Verificar confirmación de envío exitoso
-            confirmaciones = [
-                "Gracias", "Thank you", "Response recorded",
-                "Respuesta registrada", "Se ha enviado", "Your response"
-            ]
-            for conf in confirmaciones:
-                try:
-                    if page.locator(f"text={conf}").first.is_visible(timeout=3000):
-                        log.ok(f"Confirmación de envío detectada: '{conf}'")
-                        return
-                except PlaywrightTimeoutError:
-                    continue
-
-            log.warn("Formulario enviado pero no se detectó mensaje de confirmación explícita.")
-            return
-
-        except PlaywrightTimeoutError:
-            log.error("No se encontró ni 'Siguiente' ni 'Enviar'.")
-            _dump_diagnostico(page)
-            raise RuntimeError(
-                f"Sección {paginas_procesadas}: no se encontró botón de navegación. "
-                "Revisar el log de diagnóstico arriba."
-            )
-
-    raise RuntimeError(f"Límite de {max_paginas} secciones alcanzado sin enviar.")
+    log.warn("  Formulario enviado (sin texto de confirmación explícito — asumir OK).")
 
 
 # ─── Motor Principal ───────────────────────────────────────────────────────────
 
 def procesar_materia_con_retry(materia: dict, registro: list) -> tuple[bool, list]:
     """
-    Wrapper con reintentos ante errores transitorios (red, timeout).
-    Distingue errores recuperables de errores lógicos (opción no encontrada).
+    Wrapper con reintentos ante errores transitorios.
+    - FormularioCerradoError: no reintenta (el form está cerrado, es normal).
+    - Otros errores: reintenta hasta MAX_REINTENTOS veces.
     """
     nombre = materia["nombre_materia"]
 
     for intento in range(1, MAX_REINTENTOS + 1):
         if intento > 1:
             espera_retry = 45 * intento
-            log.warn(f"Reintento {intento}/{MAX_REINTENTOS} en {espera_retry}s...")
+            log.warn(
+                f"Reintento {intento}/{MAX_REINTENTOS} para '{nombre}' "
+                f"en {espera_retry}s..."
+            )
             time.sleep(espera_retry)
 
         exito, registro = _procesar_materia(materia, registro, intento)
         if exito:
             return True, registro
 
-        # Si fue el último intento, no reintentar errores lógicos
         if intento == MAX_REINTENTOS:
             log.error(f"Todos los intentos fallaron para '{nombre}'.")
 
@@ -743,13 +777,13 @@ def _procesar_materia(materia: dict, registro: list, intento: int = 1) -> tuple[
     nombre   = materia["nombre_materia"]
     hora_fin = datetime.strptime(materia["hora_fin"], "%H:%M").time()
 
-    # ── Espera humanizada ──────────────────────────────────────────────────
+    # ── Espera humanizada ──────────────────────────────────────────────────────
     restantes        = segundos_restantes_en_ventana(hora_fin)
     tope_inteligente = max(MIN_WAIT_SECONDS, min(MAX_WAIT_SECONDS, int(restantes * 0.40)))
     espera           = random.randint(MIN_WAIT_SECONDS, tope_inteligente)
 
     if restantes < MIN_WAIT_SECONDS + 60:
-        log.warn(f"Ventana casi cerrada ({restantes}s restantes). Firmando sin espera.")
+        log.warn(f"Ventana casi cerrada ({restantes}s). Firmando sin espera.")
         espera = 5
 
     log.info(
@@ -758,7 +792,7 @@ def _procesar_materia(materia: dict, registro: list, intento: int = 1) -> tuple[
     )
     time.sleep(espera)
 
-    # ── Lanzar Playwright ──────────────────────────────────────────────────
+    # ── Lanzar Playwright ──────────────────────────────────────────────────────
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(
@@ -785,7 +819,7 @@ def _procesar_materia(materia: dict, registro: list, intento: int = 1) -> tuple[
             try:
                 completar_formulario(page, materia)
 
-                # ── ÉXITO ──────────────────────────────────────────────────
+                # ── ÉXITO ──────────────────────────────────────────────────────
                 registro = registrar_asistencia(registro, materia)
                 guardar_json(LOG_FILE, registro)
                 git_commit_push(f"bot: asistencia firmada — {nombre}")
@@ -798,40 +832,35 @@ def _procesar_materia(materia: dict, registro: list, intento: int = 1) -> tuple[
                 return True, registro
 
             except FormularioCerradoError as e:
-                # ── FORMULARIO CERRADO — no es un error del bot ────────────
-                # El form no acepta respuestas. No reintentar, no capturar
-                # screenshot, no marcar el job como fallido.
-                log.warn(f"⏸ Formulario cerrado para '{nombre}': {e}")
+                # El form está cerrado — no es un error del bot
+                log.warn(f"⏸ Formulario cerrado: '{nombre}': {e}")
                 enviar_telegram(
                     f"⏸ <b>Formulario cerrado</b>\n"
                     f"📚 {nombre}\n"
                     f"ℹ️ {str(e)}\n"
                     f"🕐 {ahora().strftime('%H:%M')} ART\n"
-                    f"<i>No se reintentará hasta la próxima ventana horaria.</i>"
+                    f"<i>No se reintentará en esta ventana.</i>"
                 )
-                # Retornar "éxito" para que el retry no se active y el job
-                # no quede rojo en GitHub Actions. La asistencia no se firma
-                # (correcto: si el form está cerrado, nada que hacer).
+                # Retorna True para no activar retry ni marcar el job rojo
                 return True, registro
 
             except Exception as e:
                 log.error(f"Error en formulario: {e}")
                 traceback.print_exc()
 
-                # Captura de pantalla para el artefacto de GitHub
                 screenshot_path = Path(
                     f"error_{ahora().strftime('%H%M%S')}_intento{intento}.png"
                 )
                 try:
                     page.screenshot(path=str(screenshot_path), full_page=True)
-                    # Crear/sobreescribir error.png para el artefacto del workflow
                     page.screenshot(path=str(SCREENSHOT_FILE), full_page=True)
                     log.ok(f"Captura guardada: {screenshot_path}")
                 except Exception as se:
                     log.warn(f"No se pudo tomar captura: {se}")
 
                 enviar_telegram(
-                    f"⚠️ <b>Error al firmar</b> (intento {intento}/{MAX_REINTENTOS})\n"
+                    f"⚠️ <b>Error al firmar</b> "
+                    f"(intento {intento}/{MAX_REINTENTOS})\n"
                     f"📚 {nombre}\n"
                     f"🔍 Revisar logs de GitHub Actions\n"
                     f"<code>{str(e)[:250]}</code>",
@@ -844,7 +873,7 @@ def _procesar_materia(materia: dict, registro: list, intento: int = 1) -> tuple[
                 browser.close()
 
     except FormularioCerradoError:
-        raise  # Dejar que suba: ya fue manejado en el bloque interno
+        raise
 
     except Exception as e:
         log.error(f"Error crítico de Playwright: {type(e).__name__}: {e}")
@@ -863,9 +892,9 @@ def main():
     log.separador(f"ASISTENCIA BOT — {ahora().strftime('%Y-%m-%d %H:%M:%S %Z')}")
     log.info(f"Python {sys.version.split()[0]} | PID {os.getpid()}")
     log.info(f"Entorno: {'GitHub Actions' if os.environ.get('GITHUB_ACTIONS') else 'Local'}")
+    log.info(f"Ventana de gracia: {GRACE_MINUTES} min antes de hora_inicio")
     log.separador()
 
-    # ── Cargar datos ───────────────────────────────────────────────────────
     materias: list = cargar_json(MATERIAS_FILE, [])
     registro: list = cargar_json(LOG_FILE, [])
 
@@ -873,68 +902,74 @@ def main():
         log.error("materias.json vacío o inexistente. Abortando.")
         sys.exit(1)
 
-    # ── Validar estructura de materias.json ────────────────────────────────
-    log.info(f"{len(materias)} materias cargadas. Validando estructura...")
+    # Validar estructura
+    log.info(f"{len(materias)} materias cargadas. Validando...")
     materias_validas = []
     for idx, m in enumerate(materias):
-        errores = validar_materia(m, idx)
-        if not errores:
+        if not validar_materia(m, idx):
             materias_validas.append(m)
         else:
             log.warn(f"Materia [{idx}] omitida por errores de validación.")
     log.info(f"{len(materias_validas)}/{len(materias)} materias válidas.")
 
-    # ── Evaluar ventana horaria ────────────────────────────────────────────
     ahora_dt    = ahora()
     dia_actual  = dia_semana_actual()
     hora_actual = ahora_dt.time()
 
     log.separador(f"Evaluando {dia_actual.upper()} {hora_actual.strftime('%H:%M')} ART")
 
-    procesadas    = 0
-    hubo_errores  = False
+    procesadas   = 0
+    hubo_errores = False
 
     for materia in materias_validas:
         nombre      = materia["nombre_materia"]
         dia_materia = normalizar_dia(materia.get("dia", ""))
 
-        # ── Filtro por día ─────────────────────────────────────────────────
+        # Filtro por día
         if dia_materia != dia_actual:
-            log.debug(f"SKIP [{nombre}] — día: {dia_materia} ≠ hoy: {dia_actual}")
+            log.debug(f"SKIP [{nombre}] — día {dia_materia} ≠ hoy {dia_actual}")
             continue
 
-        # ── Filtro por hora ────────────────────────────────────────────────
+        # Filtro por ventana horaria (con gracia)
         h_inicio = datetime.strptime(materia["hora_inicio"], "%H:%M").time()
         h_fin    = datetime.strptime(materia["hora_fin"],    "%H:%M").time()
 
-        if not (h_inicio <= hora_actual <= h_fin):
+        if not en_ventana(hora_actual, h_inicio, h_fin):
+            # Calcular cuándo abre la ventana con gracia para informar
+            dt_dummy  = datetime(2000, 1, 1, h_inicio.hour, h_inicio.minute)
+            dt_gracia = dt_dummy - timedelta(minutes=GRACE_MINUTES)
             log.debug(
                 f"SKIP [{nombre}] — fuera de ventana "
-                f"({materia['hora_inicio']}–{materia['hora_fin']}, "
-                f"ahora {hora_actual.strftime('%H:%M')})"
+                f"(ventana con gracia: {dt_gracia.strftime('%H:%M')}–"
+                f"{materia['hora_fin']}, ahora: {hora_actual.strftime('%H:%M')})"
             )
             continue
 
-        # ── Filtro por duplicado ───────────────────────────────────────────
+        # Filtro por duplicado
         if ya_firmado_hoy(registro, nombre):
             continue
 
-        # ── Procesar ───────────────────────────────────────────────────────
+        # Procesar
         log.separador(f"ACTIVA → {nombre}")
-        log.info(f"Ventana: {materia['hora_inicio']}–{materia['hora_fin']} | Alumno: {materia['nombre_alumno']}")
+        log.info(
+            f"Ventana: {materia['hora_inicio']}–{materia['hora_fin']} "
+            f"(gracia desde {(datetime(2000,1,1,h_inicio.hour,h_inicio.minute)-timedelta(minutes=GRACE_MINUTES)).strftime('%H:%M')}) "
+            f"| Alumno: {materia['nombre_alumno']}"
+        )
         procesadas += 1
 
         exito, registro = procesar_materia_con_retry(materia, registro)
         if not exito:
             hubo_errores = True
 
-    # ── Resumen final ──────────────────────────────────────────────────────
     log.separador(f"FIN — {ahora().strftime('%H:%M:%S')}")
     if procesadas == 0:
-        log.info("Sin materias activas en este momento. Nada que hacer.")
+        log.info("Sin materias activas en este momento.")
     else:
-        estado = "con errores ❌" if hubo_errores else "exitoso ✅"
-        log.info(f"{procesadas} materia(s) procesadas — {estado}.")
+        log.info(
+            f"{procesadas} materia(s) procesadas — "
+            f"{'con errores ❌' if hubo_errores else 'exitoso ✅'}."
+        )
 
     if hubo_errores:
         sys.exit(1)

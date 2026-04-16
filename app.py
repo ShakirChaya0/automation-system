@@ -330,6 +330,8 @@ def pagina_materias():
         with col1:
             nombre_materia = st.text_input("Nombre de la Materia *",
                 placeholder="Ej: Investigación Operativa")
+            carrera        = st.text_input("Carrera *",
+                placeholder="Ej: Ingeniería Sistemas (K)")
             comision       = st.text_input("Comisión *",
                 placeholder="Ej: 401  (texto exacto del formulario)")
             nombre_alumno  = st.text_input("Nombre del Alumno *",
@@ -337,9 +339,9 @@ def pagina_materias():
         with col2:
             dia         = st.selectbox("Día *", DIAS_SEMANA)
             hora_inicio = st.time_input("Hora de inicio *",
-                value=dt_time(8, 0), step=900)
+                value=dt_time(8, 0), step=300)   # granularidad 5 min
             hora_fin    = st.time_input("Hora de fin *",
-                value=dt_time(10, 0), step=900)
+                value=dt_time(10, 0), step=300)  # granularidad 5 min
         link = st.text_input("Link del formulario *",
             placeholder="https://forms.cloud.microsoft/...")
 
@@ -349,11 +351,12 @@ def pagina_materias():
         )
 
         if st.form_submit_button("💾 Guardar materia", use_container_width=True):
-            if not all([nombre_materia, comision, nombre_alumno, link]):
+            if not all([nombre_materia, carrera, comision, nombre_alumno, link]):
                 st.error("⚠️ Todos los campos son obligatorios.")
             else:
                 nueva = {
                     "nombre_materia": nombre_materia.strip(),
+                    "carrera":        carrera.strip(),
                     "comision":       comision.strip(),
                     "link":           link.strip(),
                     "dia":            normalizar_dia(dia),

@@ -1,15 +1,17 @@
 [
   {
     "nombre_materia": "Investigación Operativa",
+    "carrera": "Ingeniería Sistemas (K)",
     "comision": "401",
     "link": "https://forms.cloud.microsoft/Pages/ResponsePage.aspx?id=wrlHpBOiwU6BAz6mmlFqWbc3ZouKx-pLtGrUy0HT6GVUOERXUDhNQTc2NVFJMjhET1dPUFQ2SFUxSi4u&origin=QRCode",
     "dia": "lunes",
-   "hora_inicio": "08:00",
+    "hora_inicio": "08:00",
     "hora_fin": "09:30",
     "nombre_alumno": "Chaya, Shakir Lucas"
   },
   {
     "nombre_materia": "Investigación Operativa",
+    "carrera": "Ingeniería Sistemas (K)",
     "comision": "401",
     "link": "https://forms.cloud.microsoft/Pages/ResponsePage.aspx?id=wrlHpBOiwU6BAz6mmlFqWbc3ZouKx-pLtGrUy0HT6GVUOERXUDhNQTc2NVFJMjhET1dPUFQ2SFUxSi4u&origin=QRCode",
     "dia": "martes",
@@ -19,6 +21,7 @@
   },
   {
     "nombre_materia": "Administración de Sistemas de Información",
+    "carrera": "Ingeniería Sistemas (K)",
     "comision": "401",
     "link": "https://forms.cloud.microsoft/Pages/ResponsePage.aspx?id=wrlHpBOiwU6BAz6mmlFqWbc3ZouKx-pLtGrUy0HT6GVUOERXUDhNQTc2NVFJMjhET1dPUFQ2SFUxSi4u&origin=QRCode",
     "dia": "lunes",
@@ -28,6 +31,7 @@
   },
   {
     "nombre_materia": "Administración de Sistemas de Información",
+    "carrera": "Ingeniería Sistemas (K)",
     "comision": "401",
     "link": "https://forms.cloud.microsoft/Pages/ResponsePage.aspx?id=wrlHpBOiwU6BAz6mmlFqWbc3ZouKx-pLtGrUy0HT6GVUOERXUDhNQTc2NVFJMjhET1dPUFQ2SFUxSi4u&origin=QRCode",
     "dia": "miércoles",
@@ -37,6 +41,7 @@
   },
   {
     "nombre_materia": "Redes de Datos",
+    "carrera": "Ingeniería Sistemas (K)",
     "comision": "401",
     "link": "https://forms.cloud.microsoft/Pages/ResponsePage.aspx?id=wrlHpBOiwU6BAz6mmlFqWbc3ZouKx-pLtGrUy0HT6GVUOERXUDhNQTc2NVFJMjhET1dPUFQ2SFUxSi4u&origin=QRCode",
     "dia": "martes",
@@ -46,6 +51,7 @@
   },
   {
     "nombre_materia": "Redes de Datos",
+    "carrera": "Ingeniería Sistemas (K)",
     "comision": "401",
     "link": "https://forms.cloud.microsoft/Pages/ResponsePage.aspx?id=wrlHpBOiwU6BAz6mmlFqWbc3ZouKx-pLtGrUy0HT6GVUOERXUDhNQTc2NVFJMjhET1dPUFQ2SFUxSi4u&origin=QRCode",
     "dia": "jueves",
@@ -55,6 +61,7 @@
   },
   {
     "nombre_materia": "Legislación",
+    "carrera": "Ingeniería Sistemas (K)",
     "comision": "401",
     "link": "https://forms.cloud.microsoft/Pages/ResponsePage.aspx?id=wrlHpBOiwU6BAz6mmlFqWbc3ZouKx-pLtGrUy0HT6GVUOERXUDhNQTc2NVFJMjhET1dPUFQ2SFUxSi4u&origin=QRCode",
     "dia": "miércoles",
@@ -64,6 +71,7 @@
   },
   {
     "nombre_materia": "Simulación",
+    "carrera": "Ingeniería Sistemas (K)",
     "comision": "401",
     "link": "https://forms.cloud.microsoft/Pages/ResponsePage.aspx?id=wrlHpBOiwU6BAz6mmlFqWbc3ZouKx-pLtGrUy0HT6GVUOERXUDhNQTc2NVFJMjhET1dPUFQ2SFUxSi4u&origin=QRCode",
     "dia": "miércoles",
@@ -73,6 +81,7 @@
   },
   {
     "nombre_materia": "Tecnologías para la Automatización",
+    "carrera": "Ingeniería Sistemas (K)",
     "comision": "401",
     "link": "https://forms.cloud.microsoft/Pages/ResponsePage.aspx?id=wrlHpBOiwU6BAz6mmlFqWbc3ZouKx-pLtGrUy0HT6GVUOERXUDhNQTc2NVFJMjhET1dPUFQ2SFUxSi4u&origin=QRCode",
     "dia": "jueves",
@@ -82,6 +91,7 @@
   },
   {
     "nombre_materia": "Tecnologías para la Automatización",
+    "carrera": "Ingeniería Sistemas (K)",
     "comision": "401",
     "link": "https://forms.cloud.microsoft/Pages/ResponsePage.aspx?id=wrlHpBOiwU6BAz6mmlFqWbc3ZouKx-pLtGrUy0HT6GVUOERXUDhNQTc2NVFJMjhET1dPUFQ2SFUxSi4u&origin=QRCode",
     "dia": "viernes",
