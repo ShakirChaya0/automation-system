@@ -396,7 +396,9 @@ def _dump_diagnostico(page) -> None:
         log.trace("No se pudo obtener URL/título.")
 
     try:
-        labels = page.locator("span[aria-label]").all_attribute_values("aria-label")
+        labels = page.locator("span[aria-label]").evaluate_all(
+            "elements => elements.map(e => e.getAttribute('aria-label'))"
+        )
         labels_limpios = [l for l in labels if l and l.strip()]
         if labels_limpios:
             log.trace(f"aria-labels encontrados ({len(labels_limpios)}):")
@@ -406,6 +408,21 @@ def _dump_diagnostico(page) -> None:
             log.trace("No se encontró ningún span[aria-label].")
     except Exception as e:
         log.trace(f"Error al leer aria-labels: {e}")
+
+    # data-automation-value (fuente primaria de radio buttons)
+    try:
+        dav = page.locator(_RADIO_BASE).evaluate_all(
+            "elements => elements.map(e => e.getAttribute('data-automation-value'))"
+        )
+        dav_limpios = [v for v in dav if v and v.strip()]
+        if dav_limpios:
+            log.trace(f"data-automation-value encontrados ({len(dav_limpios)}):")
+            for v in dav_limpios:
+                log.trace(f"  · '{v}'")
+        else:
+            log.trace("No se encontró ningún span[data-automation-id='radio'].")
+    except Exception as e:
+        log.trace(f"Error al leer data-automation-value: {e}")
 
     try:
         botones = [b.strip() for b in
@@ -441,17 +458,27 @@ def _leer_radios_visibles(page) -> list[str]:
     """
     Lee los valores de todos los radio buttons visibles.
     Fuente primaria: data-automation-value. Fallback: aria-label.
+
+    NOTA: Playwright Python NO tiene all_attribute_values().
+    La forma correcta es evaluate_all() con una función JS.
     """
     valores: list[str] = []
+
+    # Fuente primaria: data-automation-value en span[data-automation-id="radio"]
     try:
-        raw = page.locator(_RADIO_BASE).all_attribute_values("data-automation-value")
+        raw = page.locator(_RADIO_BASE).evaluate_all(
+            "elements => elements.map(e => e.getAttribute('data-automation-value'))"
+        )
         valores = [v.strip() for v in raw if v and v.strip()]
     except Exception:
         pass
 
+    # Fallback: aria-label en los spans de texto del label
     if not valores:
         try:
-            raw2 = page.locator("span[aria-label]").all_attribute_values("aria-label")
+            raw2 = page.locator("span[aria-label]").evaluate_all(
+                "elements => elements.map(e => e.getAttribute('aria-label'))"
+            )
             valores = [v.strip() for v in raw2 if v and v.strip()]
         except Exception:
             pass
@@ -664,11 +691,17 @@ def completar_formulario(page, materia: dict) -> None:
 
     # ── Paso 1: Carrera ───────────────────────────────────────────────────────
     log.separador("Paso 1 · Carrera")
+
+    # Esperar a que el primer radio sea visible Y tenga su atributo cargado.
+    # Se usan dos condiciones: visible en DOM + evaluate_all devuelve al menos 1 valor.
     try:
-        page.locator(_RADIO_BASE).first.wait_for(state="visible", timeout=10_000)
+        page.locator(_RADIO_BASE).first.wait_for(state="visible", timeout=12_000)
     except PlaywrightTimeoutError:
         _dump_diagnostico(page)
         raise RuntimeError("Paso 1: no aparecieron radio buttons al cargar el form.")
+
+    # Pequeña pausa extra para que el JS del form termine de poblar los atributos
+    page.wait_for_timeout(600)
 
     radios_antes = _contar_radios_visibles(page)
     _seleccionar_radio(page, carrera, "Carrera")
