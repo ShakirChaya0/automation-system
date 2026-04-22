@@ -6,5 +6,13 @@
     "fecha": "2026-04-20",
     "hora": "11:59:35",
     "timestamp_iso": "2026-04-20T11:59:35.886777-03:00"
+  },
+  {
+    "materia": "Legislación",
+    "comision": "401",
+    "alumno": "Chaya, Shakir Lucas",
+    "fecha": "2026-04-22",
+    "hora": "10:59:51",
+    "timestamp_iso": "2026-04-22T10:59:51.632723-03:00"
   }
 ]
