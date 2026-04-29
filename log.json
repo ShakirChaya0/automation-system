@@ -38,5 +38,13 @@
     "fecha": "2026-04-28",
     "hora": "08:53:00",
     "timestamp_iso": "2026-04-28T08:53:00.543361-03:00"
+  },
+  {
+    "materia": "Administración de Sistemas de Información",
+    "comision": "401",
+    "alumno": "Chaya, Shakir Lucas",
+    "fecha": "2026-04-29",
+    "hora": "08:44:22",
+    "timestamp_iso": "2026-04-29T08:44:22.247652-03:00"
   }
 ]
