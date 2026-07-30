@@ -374,5 +374,13 @@
     "fecha": "2026-07-29",
     "hora": "11:38:46",
     "timestamp_iso": "2026-07-29T11:38:46.891942-03:00"
+  },
+  {
+    "materia": "Tecnologías para la Automatización",
+    "comision": "401",
+    "alumno": "Chaya, Shakir Lucas",
+    "fecha": "2026-07-30",
+    "hora": "09:02:09",
+    "timestamp_iso": "2026-07-30T09:02:09.297756-03:00"
   }
 ]
