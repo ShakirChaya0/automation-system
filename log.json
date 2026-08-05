@@ -414,5 +414,13 @@
     "fecha": "2026-08-04",
     "hora": "11:42:32",
     "timestamp_iso": "2026-08-04T11:42:32.192860-03:00"
+  },
+  {
+    "materia": "Simulación",
+    "comision": "401",
+    "alumno": "Chaya, Shakir Lucas",
+    "fecha": "2026-08-05",
+    "hora": "11:41:54",
+    "timestamp_iso": "2026-08-05T11:41:54.759684-03:00"
   }
 ]
