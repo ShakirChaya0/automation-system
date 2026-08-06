@@ -430,5 +430,13 @@
     "fecha": "2026-08-06",
     "hora": "09:09:03",
     "timestamp_iso": "2026-08-06T09:09:03.475977-03:00"
+  },
+  {
+    "materia": "Redes de Datos",
+    "comision": "401",
+    "alumno": "Chaya, Shakir Lucas",
+    "fecha": "2026-08-06",
+    "hora": "11:42:26",
+    "timestamp_iso": "2026-08-06T11:42:26.607999-03:00"
   }
 ]
