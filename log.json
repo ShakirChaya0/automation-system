@@ -494,5 +494,13 @@
     "fecha": "2026-08-14",
     "hora": "10:20:59",
     "timestamp_iso": "2026-08-14T10:20:59.787005-03:00"
+  },
+  {
+    "materia": "Investigación Operativa",
+    "comision": "401",
+    "alumno": "Chaya, Shakir Lucas",
+    "fecha": "2026-08-18",
+    "hora": "08:48:48",
+    "timestamp_iso": "2026-08-18T08:48:48.051875-03:00"
   }
 ]
