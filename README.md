@@ -1,85 +1,150 @@
-# 🎓 Sistema de Automatización de Asistencia Pro
-### *Set & Forget — Firma tu asistencia automáticamente, sin hacer nada*
+# Automation System
+
+Sistema de **automatización web basado en Python**, diseñado para ejecutar tareas programadas mediante un navegador automatizado y gestionar su configuración, ejecución, persistencia y monitoreo.
+
+El proyecto combina **browser automation, ejecución serverless mediante GitHub Actions, configuración basada en JSON, notificaciones externas y un dashboard administrativo desarrollado con Streamlit**.
 
 ---
 
-## 📋 Descripción
+## Tecnologías
 
-Bot inteligente que firma tu asistencia en Google Forms automáticamente mediante GitHub Actions. Solo configurás tus materias una vez y el sistema se encarga de todo, con notificaciones por Telegram y registro histórico.
+* **Python 3**
+* **Playwright**
+* **Chromium**
+* **Streamlit**
+* **GitHub Actions**
+* **Telegram Bot API**
+* JSON
+* CSV
+* Git / GitHub
+* Environment Variables / GitHub Secrets
 
-## 🏗️ Arquitectura
+---
 
-```
-asistencia-pro/
-├── bot.py                          # Motor de automatización principal
-├── app.py                          # Panel de control Streamlit (local)
-├── materias.json                   # Configuración de materias
-├── log.json                        # Historial de asistencias (auto-actualizado)
+## Arquitectura
+
+```text
+automation-system/
+├── bot.py
+│   └── Motor principal de automatización
+│
+├── app.py
+│   └── Dashboard de administración con Streamlit
+│
+├── materias.json
+│   └── Configuración dinámica de tareas
+│
+├── log.json
+│   └── Persistencia del historial de ejecuciones
+│
 ├── requirements.txt
-├── .env.example                    # Plantilla de variables de entorno
-├── .gitignore
+│   └── Dependencias Python
+│
+├── .env.example
+│   └── Plantilla de configuración
+│
 └── .github/
     └── workflows/
-        └── asistencia.yml          # GitHub Actions (cron automático)
+        └── asistencia.yml
+            └── Workflow de ejecución programada
 ```
 
 ---
 
-## ⚡ Instalación Rápida
+## Componentes principales
 
-### 1. Clonar y configurar el entorno
+### Browser Automation
 
-```bash
-git clone https://github.com/TU_USUARIO/asistencia-pro.git
-cd asistencia-pro
+El motor principal utiliza **Playwright** para controlar Chromium en modo headless.
 
-python -m venv .venv
-source .venv/bin/activate        # Linux/Mac
-# .venv\Scripts\activate         # Windows
+El sistema permite:
 
-pip install -r requirements.txt
-playwright install chromium
-playwright install-deps chromium
-```
+* Inicializar un navegador automatizado.
+* Navegar entre páginas.
+* Interactuar con formularios web.
+* Seleccionar y completar campos.
+* Gestionar formularios multipágina.
+* Detectar estados de la interfaz.
+* Configurar timeouts.
+* Capturar screenshots ante errores.
 
-### 2. Configurar variables de entorno
-
-```bash
-cp .env.example .env
-# Editar .env con tus credenciales reales
-```
-
-### 3. Agregar tus materias
-
-Editá `materias.json` directamente o usá el panel:
-
-```bash
-streamlit run app.py
-```
+La automatización se ejecuta de forma programática sin necesidad de interacción manual.
 
 ---
 
-## 🔐 Configuración de GitHub Secrets
+### Motor de ejecución
 
-Ir a tu repositorio → **Settings** → **Secrets and variables** → **Actions** → **New repository secret**
+`bot.py` contiene la lógica principal del sistema.
 
-| Secret | Descripción | Cómo obtenerlo |
-|--------|-------------|----------------|
-| `TELEGRAM_TOKEN` | Token del bot de Telegram | Hablar con [@BotFather](https://t.me/BotFather) → `/newbot` |
-| `TELEGRAM_CHAT_ID` | Tu Chat ID personal | Hablar con [@userinfobot](https://t.me/userinfobot) |
+El flujo general es:
 
-> **Nota:** El `GITHUB_TOKEN` se provee automáticamente por GitHub Actions, no necesitás configurarlo.
+```text
+Configuración
+     │
+     ▼
+Validación de condiciones
+     │
+     ▼
+Determinación de tareas activas
+     │
+     ▼
+Playwright / Chromium
+     │
+     ▼
+Ejecución de automatización
+     │
+     ├───────────────┐
+     ▼               ▼
+  Success           Error
+     │               │
+     ▼               ▼
+Persistencia     Screenshot
+     │               │
+     └───────┬───────┘
+             ▼
+       Notificación
+```
+
+El motor incorpora:
+
+* Validación de fechas y horarios.
+* Prevención de ejecuciones duplicadas.
+* Manejo de excepciones.
+* Timeouts.
+* Reintentos.
+* Logging.
+* Captura de evidencia ante errores.
 
 ---
 
-## 📁 Formato de `materias.json`
+## Ejecución programada
+
+El proyecto utiliza **GitHub Actions** para ejecutar automáticamente el proceso.
+
+El workflow se encuentra en:
+
+```text
+.github/workflows/asistencia.yml
+```
+
+La ejecución está basada en un **cron schedule**, permitiendo ejecutar el proceso periódicamente sin mantener un servidor permanentemente activo.
+
+El workflow también puede ejecutarse manualmente mediante `workflow_dispatch`, facilitando tareas de debugging y pruebas.
+
+---
+
+## Configuración dinámica
+
+Las tareas son definidas mediante `materias.json`, evitando modificar el código fuente para cambiar parámetros de ejecución.
+
+Ejemplo:
 
 ```json
 [
   {
     "nombre_materia": "Sistemas Operativos",
     "comision": "Comisión 01",
-    "link": "https://docs.google.com/forms/d/e/ID_DEL_FORM/viewform",
+    "link": "https://docs.google.com/forms/d/e/FORM_ID/viewform",
     "dia": "lunes",
     "hora_inicio": "18:00",
     "hora_fin": "21:00",
@@ -88,98 +153,310 @@ Ir a tu repositorio → **Settings** → **Secrets and variables** → **Actions
 ]
 ```
 
-**Campos:**
-- `dia`: `lunes`, `martes`, `miercoles`, `jueves`, `viernes`, `sabado`, `domingo` (sin tildes)
-- `hora_inicio` / `hora_fin`: Formato 24hs `HH:MM`. La ventana define cuándo puede firmar.
-- `comision` y `nombre_alumno`: Deben coincidir **exactamente** con el texto del formulario.
+La configuración permite definir:
+
+* Identificador de la tarea.
+* Parámetros de selección.
+* URL objetivo.
+* Día de ejecución.
+* Ventana horaria.
+* Datos necesarios para completar el formulario.
+
+Esta separación permite mantener la **lógica de negocio independiente de la configuración**.
 
 ---
 
-## 🤖 Lógica del Bot
+## Dashboard
 
-```
-┌─ Cron dispara cada 15 min (L-V)
-│
-├─ Para cada materia en materias.json:
-│   ├─ ¿Es el día correcto?          → NO → Skip
-│   ├─ ¿Estamos en el horario?       → NO → Skip
-│   ├─ ¿Ya firmamos hoy?             → SI → Skip
-│   │
-│   └─ ✅ Condiciones OK:
-│       ├─ Esperar tiempo aleatorio (1-10 min)   ← Comportamiento humano
-│       ├─ Abrir Playwright (headless Chromium)
-│       ├─ Navegar al formulario
-│       ├─ Seleccionar Comisión, Materia, Nombre
-│       ├─ Manejar múltiples páginas (botón "Siguiente")
-│       └─ Enviar formulario
-│
-├─ ÉXITO:
-│   ├─ Actualizar log.json
-│   ├─ git commit + push (log.json)
-│   └─ Notificación Telegram: ✅ Asistencia exitosa: [Materia]
-│
-└─ ERROR:
-    ├─ Captura de pantalla (error.png → Artefacto de GitHub)
-    └─ Notificación Telegram: ⚠️ Error al firmar [Materia]
-```
-
----
-
-## 📱 Panel de Control (Streamlit)
+El proyecto incluye un dashboard desarrollado con **Streamlit**.
 
 ```bash
 streamlit run app.py
-# Abre en http://localhost:8501
 ```
 
-**Funcionalidades:**
-- **Dashboard:** KPIs en tiempo real, estado de materias del día
-- **Materias:** Agregar, editar y eliminar materias con formulario visual
-- **Telegram:** Configurar credenciales y enviar mensaje de prueba
-- **Historial:** Tabla filtrable, gráfico de actividad y exportación a CSV
+Disponible localmente en:
+
+```text
+http://localhost:8501
+```
+
+El dashboard permite:
+
+* Visualizar el estado de las tareas.
+* Crear, editar y eliminar configuraciones.
+* Consultar el historial de ejecuciones.
+* Filtrar registros.
+* Visualizar estadísticas.
+* Exportar información a CSV.
+* Configurar integraciones de notificación.
+* Ejecutar pruebas de conectividad.
 
 ---
 
-## ⏰ Horario del Cron
+## Persistencia y logging
 
-El workflow corre cada 15 minutos de **lunes a viernes** en el rango horario argentino (07:00-23:00 ART).
+El proyecto utiliza archivos JSON para mantener la información necesaria sin depender de una base de datos externa.
 
-El bot internamente verifica si hay una materia activa en ese momento exacto, por lo que es completamente seguro que corra en horarios sin cursada.
+### `materias.json`
+
+Contiene la configuración de las tareas automatizadas.
+
+### `log.json`
+
+Mantiene el historial de ejecuciones y permite:
+
+* Registrar ejecuciones exitosas.
+* Registrar errores.
+* Evitar ejecuciones duplicadas.
+* Consultar actividad histórica.
+
+El historial puede visualizarse desde el dashboard y exportarse a CSV.
 
 ---
 
-## 🔧 Ejecución Manual
+## Notificaciones
 
-**Desde GitHub Actions:**
-1. Ir al repositorio → **Actions** → **🎓 Firmar Asistencia Automática**
-2. **Run workflow** → Opcionalmente activar *Debug mode*
+El sistema integra la **Telegram Bot API** para enviar notificaciones relacionadas con el estado de las ejecuciones.
 
-**Local:**
+Se contemplan diferentes escenarios:
+
+```text
+Ejecución exitosa
+       ↓
+Notificación de éxito
+
+Ejecución fallida
+       ↓
+Notificación de error
+       +
+Screenshot para debugging
+```
+
+Las credenciales se obtienen mediante variables de entorno y GitHub Secrets.
+
+---
+
+## Manejo de errores
+
+El sistema incorpora mecanismos para facilitar el diagnóstico de fallos:
+
+* Exception handling.
+* Timeouts configurables.
+* Retry logic.
+* Screenshots ante errores.
+* Logs de ejecución.
+* Notificaciones externas.
+* Artefactos generados por GitHub Actions.
+
+En caso de error durante una automatización, el workflow puede conservar la evidencia generada para facilitar el debugging.
+
+---
+
+## Seguridad y configuración
+
+Las credenciales y configuraciones sensibles no forman parte del código fuente.
+
+Se utilizan:
+
+* `.env` para ejecución local.
+* `.env.example` como plantilla.
+* **GitHub Secrets** para ejecución en Actions.
+* `GITHUB_TOKEN` proporcionado por GitHub Actions.
+
+El workflow utiliza únicamente los permisos necesarios para actualizar el historial de ejecución.
+
+---
+
+## Instalación
+
+### 1. Clonar el repositorio
+
+```bash
+git clone https://github.com/ShakirChaya0/automation-system.git
+cd automation-system
+```
+
+### 2. Crear entorno virtual
+
+```bash
+python -m venv .venv
+```
+
+Activar en Linux/macOS:
+
+```bash
+source .venv/bin/activate
+```
+
+Windows:
+
+```bash
+.venv\Scripts\activate
+```
+
+### 3. Instalar dependencias
+
+```bash
+pip install -r requirements.txt
+```
+
+### 4. Instalar Chromium
+
+```bash
+playwright install chromium
+```
+
+Linux:
+
+```bash
+playwright install-deps chromium
+```
+
+### 5. Configurar variables de entorno
+
+Crear `.env` a partir de `.env.example`:
+
+```bash
+cp .env.example .env
+```
+
+Configurar las variables requeridas.
+
+---
+
+## Ejecución
+
+### Motor de automatización
+
 ```bash
 python bot.py
 ```
 
----
+### Dashboard
 
-## 🛠️ Troubleshooting
+```bash
+streamlit run app.py
+```
 
-| Problema | Solución |
-|----------|----------|
-| El formulario no se completa | Verificar que `comision` y `nombre_alumno` coincidan exactamente con el texto del form |
-| Error de Playwright | Correr `playwright install chromium && playwright install-deps chromium` |
-| No llegan notificaciones | Verificar `TELEGRAM_TOKEN` y `TELEGRAM_CHAT_ID` en GitHub Secrets |
-| El log no se actualiza | Verificar que `permissions: contents: write` esté en el workflow |
-| Timeout en el formulario | Aumentar `PAGE_TIMEOUT` en `bot.py` |
+### GitHub Actions
+
+El workflow puede ejecutarse automáticamente mediante el schedule configurado o manualmente utilizando `workflow_dispatch`.
 
 ---
 
-## 🔒 Seguridad
+## Configuración de GitHub Secrets
 
-- Las credenciales **nunca** se almacenan en el código ni en archivos tracked por Git
-- `.env` está en `.gitignore`
-- El `GITHUB_TOKEN` se usa con permisos mínimos (`contents: write` únicamente)
-- El bot usa User-Agent de Chrome real para evitar detección
+Para la ejecución en GitHub Actions se utilizan Secrets para las credenciales de servicios externos.
+
+| Secret             | Descripción                    |
+| ------------------ | ------------------------------ |
+| `TELEGRAM_TOKEN`   | Token de autenticación del bot |
+| `TELEGRAM_CHAT_ID` | Identificador del destinatario |
+
+`GITHUB_TOKEN` es proporcionado automáticamente por GitHub Actions.
 
 ---
 
-*Desarrollado con ❤️ · Python + Playwright + GitHub Actions + Streamlit*
+## Conceptos técnicos aplicados
+
+El proyecto permite trabajar con diferentes conceptos de desarrollo de software:
+
+* **Web Automation**
+* Browser Automation
+* Headless Browsers
+* Python
+* Playwright
+* Event/Condition-based execution
+* Scheduled Jobs
+* Cron
+* GitHub Actions
+* CI/CD automation
+* Environment Variables
+* GitHub Secrets
+* REST/API integrations
+* Error Handling
+* Retry Logic
+* Logging
+* JSON persistence
+* CSV data export
+* Dashboard development
+* Streamlit
+* External Notifications
+* Cloud execution
+
+---
+
+## Flujo de ejecución en GitHub Actions
+
+```text
+GitHub Actions
+      │
+      ▼
+Scheduled Workflow
+      │
+      ▼
+Python Environment
+      │
+      ▼
+Load Configuration
+      │
+      ▼
+Validate Active Tasks
+      │
+      ▼
+Playwright + Chromium
+      │
+      ▼
+Execute Automation
+      │
+      ├───────────────┐
+      ▼               ▼
+   Success           Error
+      │               │
+      ▼               ▼
+ Update Log       Screenshot
+      │               │
+      └───────┬───────┘
+              ▼
+       Telegram API
+```
+
+---
+
+## Objetivos técnicos
+
+El proyecto fue desarrollado como una implementación práctica de un sistema de **automatización web ejecutado de forma programada**, con foco en:
+
+* Automatización de tareas repetitivas.
+* Ejecución sin infraestructura dedicada.
+* Separación entre configuración y lógica.
+* Tolerancia a errores.
+* Observabilidad de las ejecuciones.
+* Integración con servicios externos.
+* Administración mediante una interfaz web.
+* Automatización de workflows mediante GitHub Actions.
+* Manejo seguro de credenciales.
+
+---
+
+## Stack
+
+```text
+Python
+├── Playwright
+├── Streamlit
+└── python-dotenv
+
+Automation / Cloud
+├── GitHub Actions
+├── Cron
+└── GitHub Secrets
+
+Integrations
+└── Telegram Bot API
+
+Data
+├── JSON
+
+└── CSV
+```
